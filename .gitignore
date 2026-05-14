@@ -3,4 +3,6 @@ __pycache__/
 *.py[cod]
 .DS_Store
 meeting_summary.txt
+*_회의록.txt
+*_회의록_*.txt
 temp/
