@@ -42,7 +42,18 @@ class MainTests(unittest.TestCase):
             fake_dotenv = types.SimpleNamespace(load_dotenv=Mock())
             fake_utils = types.SimpleNamespace(ensure_audio_file=Mock())
             fake_transcribe = types.SimpleNamespace(transcribe_audio=Mock(return_value="transcript text"))
-            fake_summarize = types.SimpleNamespace(summarize_transcript=Mock(return_value="final minutes"))
+            fake_summarize = types.SimpleNamespace(
+                summarize_transcript=Mock(
+                    return_value={
+                        "minutes": "final minutes",
+                        "action_items": [],
+                        "summary_facts": [],
+                        "decisions": [],
+                        "speaker_highlights": [],
+                        "warnings": [],
+                    }
+                )
+            )
 
             fake_modules = {
                 "dotenv": fake_dotenv,

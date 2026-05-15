@@ -6,3 +6,6 @@ meeting_summary.txt
 *_회의록.txt
 *_회의록_*.txt
 temp/
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
