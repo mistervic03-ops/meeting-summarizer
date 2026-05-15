@@ -63,10 +63,11 @@ MEETING_STRUCTURE_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["decision", "status"],
+                "required": ["decision", "status", "source_quote"],
                 "properties": {
                     "decision": {"type": "string"},
                     "status": {"type": "string", "enum": ["확정", "미확정"]},
+                    "source_quote": {"type": "string"},
                 },
             },
         },
@@ -75,12 +76,13 @@ MEETING_STRUCTURE_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["task", "owner", "due_date", "confidence"],
+                "required": ["task", "owner", "due_date", "confidence", "source_quote"],
                 "properties": {
                     "task": {"type": "string"},
                     "owner": {"type": "string"},
                     "due_date": {"type": "string"},
                     "confidence": {"type": "string", "enum": ["high", "low"]},
+                    "source_quote": {"type": "string"},
                 },
             },
         },
@@ -157,6 +159,9 @@ def summarize_transcript(transcript: str, context: str = "") -> SummaryResult:
             context,
         )
         logger.info("extract_structure completed in %.3fs", elapsed)
+
+        structure, elapsed = run_timed_stage("validate_structure", validate_structure, structure, preprocessed.text)
+        logger.info("validate_structure completed in %.3fs", elapsed)
 
         minutes, elapsed = run_timed_stage(
             "generate_minutes",
@@ -295,6 +300,95 @@ def extract_structure(transcript: str, meeting_date: str, context: str = "") -> 
     client = create_openai_client()
     prompt = build_extraction_prompt(transcript, meeting_date, context)
     return request_structured_structure(client, prompt)
+
+
+def validate_structure(structure: dict[str, Any], transcript: str) -> dict[str, Any]:
+    """Validate extracted structure with conservative Python grounding checks."""
+    normalized_structure = ensure_structure_shape(structure)
+    warnings = unique_text_list(clean_text_list(normalized_structure.warnings))
+    action_items: list[dict[str, Any]] = []
+    seen_action_keys: set[tuple[str, str, str]] = set()
+
+    for item in normalized_structure.action_items:
+        if not isinstance(item, dict):
+            continue
+
+        task = as_text(item.get("task"))
+        if not task:
+            continue
+
+        owner = normalize_action_owner(as_text(item.get("owner")))
+        due_date = as_text(item.get("due_date")) or "미정"
+        confidence = as_text(item.get("confidence"))
+        confidence = confidence if confidence in {"high", "low"} else "low"
+        source_quote = normalize_source_quote(as_text(item.get("source_quote")))
+
+        if owner == "미정":
+            confidence = "low"
+            warnings.append(f"액션 아이템 '{task}'의 담당자 확인이 필요합니다.")
+        if due_date == "미정":
+            confidence = "low"
+            warnings.append(f"액션 아이템 '{task}'의 기한 확인이 필요합니다.")
+        if not source_quote:
+            confidence = "low"
+            warnings.append(f"액션 아이템 '{task}'의 원문 근거 확인이 필요합니다.")
+        elif not source_quote_in_transcript(source_quote, transcript):
+            confidence = "low"
+            warnings.append(f"액션 아이템 '{task}'의 근거 문장을 transcript에서 확인하지 못했습니다.")
+
+        dedupe_key = (task, owner, due_date)
+        if dedupe_key in seen_action_keys:
+            continue
+        seen_action_keys.add(dedupe_key)
+        action_items.append(
+            {
+                "task": task,
+                "owner": owner,
+                "due_date": due_date,
+                "confidence": confidence,
+                "source_quote": source_quote,
+            }
+        )
+
+    decisions: list[dict[str, Any]] = []
+    seen_decision_keys: set[tuple[str, str]] = set()
+
+    for item in normalized_structure.decisions:
+        if not isinstance(item, dict):
+            continue
+
+        decision = as_text(item.get("decision"))
+        if not decision:
+            continue
+
+        status = as_text(item.get("status"))
+        status = status if status in {"확정", "미확정"} else "미확정"
+        source_quote = normalize_source_quote(as_text(item.get("source_quote")))
+
+        if not source_quote:
+            warnings.append(f"결정사항 '{decision}'의 원문 근거 확인이 필요합니다.")
+        elif not source_quote_in_transcript(source_quote, transcript):
+            warnings.append(f"결정사항 '{decision}'의 근거 문장을 transcript에서 확인하지 못했습니다.")
+
+        dedupe_key = (decision, status)
+        if dedupe_key in seen_decision_keys:
+            continue
+        seen_decision_keys.add(dedupe_key)
+        decisions.append(
+            {
+                "decision": decision,
+                "status": status,
+                "source_quote": source_quote,
+            }
+        )
+
+    return {
+        "summary_facts": clean_text_list(normalized_structure.summary_facts),
+        "decisions": decisions,
+        "action_items": action_items,
+        "speaker_highlights": clean_text_list(normalized_structure.speaker_highlights),
+        "warnings": unique_text_list(warnings),
+    }
 
 
 def generate_minutes(
@@ -449,6 +543,21 @@ def clean_text_list(values: list[Any]) -> list[str]:
     return [as_text(value) for value in values if as_text(value)]
 
 
+def unique_text_list(values: list[Any]) -> list[str]:
+    """Return unique non-empty string values while preserving source order."""
+    unique_values: list[str] = []
+    seen_values: set[str] = set()
+
+    for value in values:
+        text = as_text(value)
+        if not text or text in seen_values:
+            continue
+        seen_values.add(text)
+        unique_values.append(text)
+
+    return unique_values
+
+
 def render_quick_summary(summary_facts: list[str]) -> str:
     """Render a short quick summary from structured summary facts."""
     summary_lines = [f"- {fact}" for fact in extract_quick_summary_facts(summary_facts)]
@@ -484,6 +593,33 @@ def normalize_action_owner(owner: str) -> str:
     if stripped_owner in {"저", "제가", "나", "내가"}:
         return "미정"
     return stripped_owner or "미정"
+
+
+def normalize_source_quote(source_quote: str) -> str:
+    """Return a display-safe source quote, preferring empty text over unknown labels."""
+    stripped_quote = source_quote.strip()
+    if stripped_quote == "미정":
+        return ""
+    return stripped_quote
+
+
+def source_quote_in_transcript(source_quote: str, transcript: str) -> bool:
+    """Return whether a source quote is conservatively present in transcript text."""
+    quote = as_text(source_quote)
+    if not quote:
+        return False
+
+    if quote in transcript:
+        return True
+
+    normalized_quote = normalize_quote_text(quote)
+    normalized_transcript = normalize_quote_text(transcript)
+    return bool(normalized_quote and normalized_quote in normalized_transcript)
+
+
+def normalize_quote_text(value: str) -> str:
+    """Normalize whitespace for conservative source quote substring matching."""
+    return re.sub(r"\s+", " ", as_text(value)).strip()
 
 
 def remove_action_items_section(minutes_text: str) -> str:
@@ -589,14 +725,18 @@ def build_extraction_prompt(transcript: str, meeting_date: str, context: str = "
 
 원칙:
 - 사실만 추출하고 추정하지 마세요.
-- 불명확한 값은 "미정" 또는 null로 두세요.
+- 불명확한 일반 값은 "미정"으로 두고, source_quote의 근거가 없으면 빈 문자열로 두세요.
 - 모든 출력은 한국어로 작성하세요.
 - 이름, 날짜, 숫자는 원문 표현을 유지하세요.
 - 스키마에 없는 필드는 생성하지 마라.
 - summary_facts에는 회의 요약에 쓸 핵심 사실만 짧게 넣으세요.
 - decisions에는 명확한 결정과 미확정 논의를 구분해 넣으세요.
+- decisions의 source_quote에는 transcript에 실제로 나온 짧은 근거 문장을 원문에 가깝게 넣으세요.
 - 결정사항에 행동 지시가 포함되면 반드시 action_items에도 같은 일을 추출하세요.
 - "~하기로 했다", "~담당", "~까지 완료" 표현은 action_item 후보로 잡으세요.
+- action_items의 source_quote에는 transcript에 실제로 나온 짧은 근거 문장을 원문에 가깝게 넣으세요.
+- 원문 근거가 없으면 사실을 만들지 말고 source_quote는 "미정"이 아니라 빈 문자열로 두거나 warnings에 추가하세요.
+- 애매하지만 중요할 수 있는 action item이나 decision은 삭제하지 말고 confidence를 low로 두고 warnings에 추가하세요.
 - owner가 없으면 warnings에 추가하세요.
 - confidence가 low인 항목은 warnings에 추가하세요.
 - 기한이 없거나 불명확하면 due_date는 "미정"으로 두고 warnings에 추가하세요.

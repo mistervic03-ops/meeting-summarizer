@@ -62,13 +62,15 @@ class SummarizeTests(unittest.TestCase):
         self.assertIn("이서연: 품질 검수를 맡겠습니다.", result.text)
 
     def test_summarize_transcript_runs_new_pipeline(self) -> None:
-        """공개 인터페이스가 새 4단계 파이프라인을 순서대로 호출합니다."""
+        """공개 인터페이스가 검증 단계를 포함한 파이프라인을 순서대로 호출합니다."""
         preprocessed = summarize.PreprocessedTranscript("정리된 transcript", "2026-05-14")
         structure = empty_track_b_structure()
 
         with patch.object(summarize, "preprocess_transcript", return_value=preprocessed), patch.object(
             summarize, "extract_structure", return_value=structure
         ) as extract_mock, patch.object(
+            summarize, "validate_structure", return_value=structure
+        ) as validate_mock, patch.object(
             summarize, "generate_minutes", return_value="자연어 회의록"
         ) as generate_mock, patch.object(summarize, "render_output", return_value="최종 출력") as render_mock:
             result = summarize.summarize_transcript("raw transcript")
@@ -77,6 +79,7 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(result["summary_facts"], [])
         self.assertEqual(result["action_items"], [])
         extract_mock.assert_called_once_with("정리된 transcript", "2026-05-14", "")
+        validate_mock.assert_called_once_with(structure, "정리된 transcript")
         generate_mock.assert_called_once_with("정리된 transcript", structure, "")
         render_mock.assert_called_once_with(structure, "자연어 회의록")
 
@@ -88,6 +91,8 @@ class SummarizeTests(unittest.TestCase):
         with patch.object(summarize, "preprocess_transcript", return_value=preprocessed), patch.object(
             summarize, "extract_structure", return_value=structure
         ) as extract_mock, patch.object(
+            summarize, "validate_structure", return_value=structure
+        ), patch.object(
             summarize, "generate_minutes", return_value="자연어 회의록"
         ) as generate_mock, patch.object(summarize, "render_output", return_value="최종 출력"):
             summarize.summarize_transcript("raw transcript", context="VIP 프로젝트: 중요 고객")
@@ -102,11 +107,22 @@ class SummarizeTests(unittest.TestCase):
 
     def test_summarize_transcript_returns_api_result_shape(self) -> None:
         """summarize_transcript는 API 응답에 필요한 구조형 결과를 반환합니다."""
-        preprocessed = summarize.PreprocessedTranscript("정리된 transcript", "2026-05-14")
+        preprocessed = summarize.PreprocessedTranscript(
+            "김민수: 후속 작업은 2026-05-20까지 진행합니다.\n회의 진행 확정",
+            "2026-05-14",
+        )
         structure = {
             "summary_facts": ["빠른 요약"],
-            "decisions": [{"decision": "진행 확정", "status": "확정"}],
-            "action_items": [{"task": "후속 작업", "owner": "김민수", "due_date": "2026-05-20", "confidence": "high"}],
+            "decisions": [{"decision": "진행 확정", "status": "확정", "source_quote": "회의 진행 확정"}],
+            "action_items": [
+                {
+                    "task": "후속 작업",
+                    "owner": "김민수",
+                    "due_date": "2026-05-20",
+                    "confidence": "high",
+                    "source_quote": "후속 작업은 2026-05-20까지 진행합니다.",
+                }
+            ],
             "speaker_highlights": ["김민수가 후속 작업을 언급했습니다."],
             "warnings": ["확인 필요"],
         }
@@ -123,9 +139,14 @@ class SummarizeTests(unittest.TestCase):
             {"minutes", "action_items", "summary_facts", "decisions", "speaker_highlights", "warnings"},
         )
         self.assertEqual(result["minutes"], "최종 출력")
-        self.assertEqual(result["action_items"], structure["action_items"])
+        self.assertEqual(
+            result["action_items"],
+            [{"task": "후속 작업", "owner": "김민수", "due_date": "2026-05-20", "confidence": "high"}],
+        )
+        self.assertNotIn("source_quote", result["action_items"][0])
         self.assertEqual(result["summary_facts"], structure["summary_facts"])
-        self.assertEqual(result["decisions"], structure["decisions"])
+        self.assertEqual(result["decisions"], [{"decision": "진행 확정", "status": "확정"}])
+        self.assertNotIn("source_quote", result["decisions"][0])
         self.assertEqual(result["speaker_highlights"], structure["speaker_highlights"])
         self.assertEqual(result["warnings"], structure["warnings"])
 
@@ -149,8 +170,12 @@ class SummarizeTests(unittest.TestCase):
         self.assertIn("스키마에 없는 필드는 생성하지 마라", prompt)
         self.assertIn("summary_facts에는 회의 요약", prompt)
         self.assertIn("decisions에는 명확한 결정", prompt)
+        self.assertIn("decisions의 source_quote", prompt)
         self.assertIn("결정사항에 행동 지시가 포함되면 반드시 action_items", prompt)
         self.assertIn("\"~하기로 했다\", \"~담당\", \"~까지 완료\"", prompt)
+        self.assertIn("action_items의 source_quote", prompt)
+        self.assertIn("source_quote는 \"미정\"이 아니라 빈 문자열", prompt)
+        self.assertIn("삭제하지 말고 confidence를 low", prompt)
         self.assertIn("owner가 없으면 warnings에 추가", prompt)
         self.assertIn("confidence가 low인 항목은 warnings에 추가", prompt)
         self.assertIn("due_date는 \"미정\"으로 두고 warnings에 추가", prompt)
@@ -190,6 +215,65 @@ class SummarizeTests(unittest.TestCase):
             set(schema["properties"]),
             {"summary_facts", "decisions", "action_items", "speaker_highlights", "warnings"},
         )
+        decision_schema = schema["properties"]["decisions"]["items"]
+        self.assertEqual(decision_schema["required"], ["decision", "status", "source_quote"])
+        self.assertIn("source_quote", decision_schema["properties"])
+        action_item_schema = schema["properties"]["action_items"]["items"]
+        self.assertEqual(action_item_schema["required"], ["task", "owner", "due_date", "confidence", "source_quote"])
+        self.assertIn("source_quote", action_item_schema["properties"])
+
+    def test_validate_structure_normalizes_actions_decisions_and_warnings(self) -> None:
+        """validate_structure가 grounding, 정규화, 중복 제거를 Python에서 수행합니다."""
+        structure = {
+            "summary_facts": ["빠른 요약"],
+            "decisions": [
+                {"decision": "Streamlit 기반 진행", "status": "done", "source_quote": ""},
+                {"decision": "Streamlit 기반 진행", "status": "done", "source_quote": ""},
+            ],
+            "action_items": [
+                {
+                    "task": "배포 확인",
+                    "owner": "제가",
+                    "due_date": "",
+                    "confidence": "maybe",
+                    "source_quote": "없는 근거 문장",
+                },
+                {
+                    "task": "배포 확인",
+                    "owner": "제가",
+                    "due_date": "",
+                    "confidence": "high",
+                    "source_quote": "없는 근거 문장",
+                },
+            ],
+            "speaker_highlights": ["주요 발언"],
+            "warnings": ["기존 경고", "기존 경고"],
+        }
+
+        result = summarize.validate_structure(structure, "김민수: 배포 확인은 금요일까지 진행하겠습니다.")
+
+        self.assertEqual(result["summary_facts"], ["빠른 요약"])
+        self.assertEqual(len(result["action_items"]), 1)
+        self.assertEqual(
+            result["action_items"][0],
+            {
+                "task": "배포 확인",
+                "owner": "미정",
+                "due_date": "미정",
+                "confidence": "low",
+                "source_quote": "없는 근거 문장",
+            },
+        )
+        self.assertEqual(len(result["decisions"]), 1)
+        self.assertEqual(
+            result["decisions"][0],
+            {"decision": "Streamlit 기반 진행", "status": "미확정", "source_quote": ""},
+        )
+        self.assertEqual(result["warnings"].count("기존 경고"), 1)
+        self.assertTrue(any("담당자 확인" in warning for warning in result["warnings"]))
+        self.assertTrue(any("기한 확인" in warning for warning in result["warnings"]))
+        self.assertTrue(any("근거 문장을 transcript에서 확인하지 못했습니다" in warning for warning in result["warnings"]))
+        self.assertTrue(any("원문 근거 확인" in warning for warning in result["warnings"]))
 
     def test_generate_minutes_uses_gpt54_and_verified_json_prompt(self) -> None:
         """generate_minutes는 검증 JSON 기준 프롬프트로 자연어 회의록을 요청합니다."""
