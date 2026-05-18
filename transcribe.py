@@ -37,6 +37,9 @@ DEFAULT_DIARIZED_CHUNK_OVERLAP_SECONDS = 0
 CHUNK_DURATION_TOLERANCE_SECONDS = 3
 INPUT_TOO_LARGE_MAX_RETRY_DEPTH = 2
 MIN_RETRY_CHUNK_DURATION_SECONDS = 30
+DEFAULT_STT_VOCABULARY_PATH = "config/stt_vocabulary.yaml"
+DEFAULT_STT_VOCABULARY_HINTS_ENABLED = "true"
+MAX_STT_VOCABULARY_PROMPT_CHARS = 1000
 
 
 @dataclass(frozen=True)
@@ -170,6 +173,149 @@ def resolve_transcription_model_name(
     if mode == "plain":
         return get_transcription_model()
     return get_diarized_transcription_model()
+
+
+def stt_vocabulary_hints_enabled() -> bool:
+    """STT vocabulary hint 사용 여부를 환경 변수로 판단합니다."""
+    return os.getenv("ENABLE_STT_VOCABULARY_HINTS", DEFAULT_STT_VOCABULARY_HINTS_ENABLED).strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+def get_stt_vocabulary_path() -> Path:
+    """STT vocabulary YAML 경로를 반환합니다."""
+    return Path(os.getenv("STT_VOCABULARY_PATH", DEFAULT_STT_VOCABULARY_PATH))
+
+
+def load_stt_vocabulary_terms(path: str | Path | None = None) -> list[str]:
+    """간단한 YAML vocabulary 파일에서 STT 용어를 안전하게 읽습니다."""
+    vocabulary_path = Path(path) if path is not None else get_stt_vocabulary_path()
+    try:
+        lines = vocabulary_path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    except Exception as exc:
+        log_trace_event("stt_vocabulary_load_failed", path=vocabulary_path, error=exc)
+        return []
+
+    terms: list[str] = []
+    seen: set[str] = set()
+    for line in lines:
+        term = parse_stt_vocabulary_line(line)
+        if term is None:
+            continue
+        dedupe_key = normalize_vocabulary_term_key(term)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        terms.append(term)
+    return terms
+
+
+def parse_stt_vocabulary_line(line: str) -> str | None:
+    """지원하는 YAML list line에서 단일 용어를 추출합니다."""
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#") or not stripped.startswith("-"):
+        return None
+    raw_value = stripped[1:].strip()
+    if not raw_value or raw_value.startswith(("[", "{")) or ":" in raw_value:
+        return None
+    raw_value = strip_inline_comment(raw_value).strip()
+    raw_value = raw_value.strip("\"'")
+    if not is_valid_stt_vocabulary_term(raw_value):
+        return None
+    return raw_value
+
+
+def strip_inline_comment(value: str) -> str:
+    """따옴표 없는 간단한 YAML list item의 inline comment를 제거합니다."""
+    if " #" not in value:
+        return value
+    return value.split(" #", 1)[0]
+
+
+def is_valid_stt_vocabulary_term(value: str) -> bool:
+    """STT hint로 사용할 만한 짧은 문자열인지 확인합니다."""
+    if not value or len(value) > 80:
+        return False
+    return bool(re.search(r"[A-Za-z가-힣]", value))
+
+
+def normalize_vocabulary_term_key(term: str) -> str:
+    """중복 제거용 vocabulary key를 만듭니다."""
+    return re.sub(r"\s+", " ", term.strip()).casefold()
+
+
+def build_stt_vocabulary_prompt(terms: list[str] | None = None) -> str:
+    """STT 요청에 넣을 간결한 vocabulary hint 문장을 만듭니다."""
+    vocabulary_terms = load_stt_vocabulary_terms() if terms is None else deduplicate_stt_vocabulary_terms(terms)
+    if not vocabulary_terms:
+        return ""
+
+    prefix = "Known organization, product, and technical terms that may appear: "
+    selected_terms: list[str] = []
+    for term in vocabulary_terms:
+        candidate_terms = [*selected_terms, term]
+        candidate_prompt = prefix + ", ".join(candidate_terms)
+        if len(candidate_prompt) > MAX_STT_VOCABULARY_PROMPT_CHARS:
+            break
+        selected_terms.append(term)
+    return prefix + ", ".join(selected_terms) if selected_terms else ""
+
+
+def deduplicate_stt_vocabulary_terms(terms: list[str]) -> list[str]:
+    """직접 전달된 vocabulary term 목록도 파일 로딩과 같은 기준으로 정리합니다."""
+    result: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        if not isinstance(term, str):
+            continue
+        cleaned = term.strip()
+        if not is_valid_stt_vocabulary_term(cleaned):
+            continue
+        key = normalize_vocabulary_term_key(cleaned)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(cleaned)
+    return result
+
+
+def get_stt_vocabulary_prompt_for_request(mode: Literal["plain", "diarized"], model_name: str) -> str:
+    """현재 요청에 사용할 STT vocabulary prompt를 반환하고 compact trace를 남깁니다."""
+    if not stt_vocabulary_hints_enabled():
+        log_trace_event("stt_vocabulary", mode=mode, model=model_name, enabled=False, terms_loaded=0, prompt_chars=0)
+        return ""
+
+    terms = load_stt_vocabulary_terms()
+    prompt = build_stt_vocabulary_prompt(terms)
+    log_trace_event(
+        "stt_vocabulary",
+        mode=mode,
+        model=model_name,
+        enabled=True,
+        terms_loaded=len(terms),
+        prompt_chars=len(prompt),
+    )
+    return prompt
+
+
+def transcription_request_supports_vocabulary_prompt(mode: Literal["plain", "diarized"], model_name: str) -> bool:
+    """현재 OpenAI STT 요청에 vocabulary prompt를 넣을지 판단합니다."""
+    return mode in {"plain", "diarized"} and bool(model_name)
+
+
+def is_unsupported_vocabulary_prompt_error(exc: Exception) -> bool:
+    """provider가 prompt 인자를 지원하지 않을 때 재시도할지 판단합니다."""
+    values = [
+        str(exc).lower(),
+        str(getattr(exc, "body", "")).lower(),
+        str(getattr(exc, "message", "")).lower(),
+    ]
+    return any("prompt" in value and ("unsupported" in value or "unexpected" in value or "unknown" in value) for value in values)
 
 
 logger.warning("%s transcribe_import runtime_version=%s file=%s", get_trace_prefix(), TRANSCRIBE_RUNTIME_VERSION, __file__)
@@ -759,6 +905,12 @@ def call_openai_transcription(
         "model": resolved_model,
         "language": get_transcription_language(),
     }
+    vocabulary_prompt = get_stt_vocabulary_prompt_for_request(mode, resolved_model)
+    if vocabulary_prompt and transcription_request_supports_vocabulary_prompt(mode, resolved_model):
+        transcription_kwargs["prompt"] = vocabulary_prompt
+    elif vocabulary_prompt:
+        log_trace_event("stt_vocabulary_skipped", mode=mode, model=resolved_model, reason="unsupported_request")
+
     if mode == "diarized":
         transcription_kwargs.update(
             {
@@ -777,7 +929,16 @@ def call_openai_transcription(
     )
     try:
         with audio_file.open("rb") as file_data:
-            transcription = client.audio.transcriptions.create(file=file_data, **transcription_kwargs)
+            try:
+                transcription = client.audio.transcriptions.create(file=file_data, **transcription_kwargs)
+            except Exception as exc:
+                if "prompt" in transcription_kwargs and is_unsupported_vocabulary_prompt_error(exc):
+                    log_trace_event("stt_vocabulary_skipped", mode=mode, model=resolved_model, reason="provider_rejected_prompt")
+                    transcription_kwargs.pop("prompt", None)
+                    file_data.seek(0)
+                    transcription = client.audio.transcriptions.create(file=file_data, **transcription_kwargs)
+                else:
+                    raise
     except Exception as exc:
         log_trace_event(
             "openai_request_failed",

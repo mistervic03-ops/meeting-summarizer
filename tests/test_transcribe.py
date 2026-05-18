@@ -146,6 +146,63 @@ class TranscribeTests(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_TRANSCRIPTION_LANGUAGE": "en"}):
             self.assertEqual(transcribe.get_transcription_language(), "en")
 
+    def test_load_stt_vocabulary_terms_reads_yaml_and_deduplicates(self) -> None:
+        """STT vocabulary YAML은 읽기 쉬운 순서로 중복을 제거해 로드합니다."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            vocabulary_file.write_text(
+                "\n".join(
+                    [
+                        "organization_terms:",
+                        "  - BigxData",
+                        "  - Tableau",
+                        "  - bigxdata",
+                        "  - Semantic Layer",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            terms = transcribe.load_stt_vocabulary_terms(vocabulary_file)
+
+        self.assertEqual(terms, ["BigxData", "Tableau", "Semantic Layer"])
+
+    def test_load_stt_vocabulary_terms_tolerates_missing_file(self) -> None:
+        """vocabulary 파일이 없어도 전사 흐름은 실패하지 않습니다."""
+        self.assertEqual(transcribe.load_stt_vocabulary_terms(Path("/tmp/missing-stt-vocabulary.yaml")), [])
+
+    def test_load_stt_vocabulary_terms_ignores_malformed_entries(self) -> None:
+        """문자열 term이 아닌 항목은 조용히 건너뜁니다."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            vocabulary_file.write_text(
+                "\n".join(
+                    [
+                        "organization_terms:",
+                        "  - BigxData",
+                        "  - 12345",
+                        "  - []",
+                        "  - name: Broken",
+                        "  - Agent Works # inline comment",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            terms = transcribe.load_stt_vocabulary_terms(vocabulary_file)
+
+        self.assertEqual(terms, ["BigxData", "Agent Works"])
+
+    def test_build_stt_vocabulary_prompt_is_compact(self) -> None:
+        """STT vocabulary prompt는 설명 없이 제한 길이 안에서 구성됩니다."""
+        terms = [f"Term {index}" for index in range(200)]
+
+        prompt = transcribe.build_stt_vocabulary_prompt(terms)
+
+        self.assertLessEqual(len(prompt), transcribe.MAX_STT_VOCABULARY_PROMPT_CHARS)
+        self.assertTrue(prompt.startswith("Known organization, product, and technical terms that may appear: "))
+        self.assertIn("Term 0", prompt)
+
     def test_get_plain_transcription_concurrency_defaults_and_clamps_env(self) -> None:
         """plain STT 동시성은 기본값과 안전한 상한/하한을 적용합니다."""
         with patch.dict(os.environ, {}, clear=True):
@@ -703,6 +760,85 @@ class TranscribeTests(unittest.TestCase):
         validate_mock.assert_called_once()
         self.assertEqual(validate_mock.call_args.args[1], "plain")
 
+    def test_openai_wrapper_receives_stt_vocabulary_prompt(self) -> None:
+        """공통 OpenAI STT wrapper는 vocabulary prompt를 요청에 전달합니다."""
+        create_mock = Mock(return_value=types.SimpleNamespace(text="hello"))
+        fake_client = types.SimpleNamespace(
+            audio=types.SimpleNamespace(transcriptions=types.SimpleNamespace(create=create_mock))
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio_file = Path(temp_dir) / "meeting.wav"
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            audio_file.write_bytes(b"audio")
+            vocabulary_file.write_text("organization_terms:\n  - BigxData\n  - Semantic Layer\n", encoding="utf-8")
+
+            with patch.object(transcribe, "ensure_audio_file"), patch.object(
+                transcribe, "create_openai_client", return_value=fake_client
+            ), patch.dict(os.environ, {"STT_VOCABULARY_PATH": str(vocabulary_file)}):
+                transcribe.call_openai_transcription(
+                    audio_file=audio_file,
+                    mode="plain",
+                    chunk_config=transcribe.AudioChunkConfig(duration_seconds=300, overlap_seconds=0),
+                    source_files=[audio_file],
+                )
+
+        self.assertIn("prompt", create_mock.call_args.kwargs)
+        self.assertIn("BigxData", create_mock.call_args.kwargs["prompt"])
+        self.assertIn("Semantic Layer", create_mock.call_args.kwargs["prompt"])
+
+    def test_disabling_stt_vocabulary_hints_prevents_injection(self) -> None:
+        """환경 변수로 STT vocabulary hint 주입을 끌 수 있습니다."""
+        create_mock = Mock(return_value=types.SimpleNamespace(text="hello"))
+        fake_client = types.SimpleNamespace(
+            audio=types.SimpleNamespace(transcriptions=types.SimpleNamespace(create=create_mock))
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio_file = Path(temp_dir) / "meeting.wav"
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            audio_file.write_bytes(b"audio")
+            vocabulary_file.write_text("organization_terms:\n  - BigxData\n", encoding="utf-8")
+
+            with patch.object(transcribe, "ensure_audio_file"), patch.object(
+                transcribe, "create_openai_client", return_value=fake_client
+            ), patch.dict(
+                os.environ,
+                {
+                    "ENABLE_STT_VOCABULARY_HINTS": "false",
+                    "STT_VOCABULARY_PATH": str(vocabulary_file),
+                },
+            ):
+                transcribe.call_openai_transcription(
+                    audio_file=audio_file,
+                    mode="plain",
+                    chunk_config=transcribe.AudioChunkConfig(duration_seconds=300, overlap_seconds=0),
+                    source_files=[audio_file],
+                )
+
+        self.assertNotIn("prompt", create_mock.call_args.kwargs)
+
+    def test_plain_transcribe_chunk_uses_stt_vocabulary_hint(self) -> None:
+        """plain chunk path도 vocabulary hint를 포함합니다."""
+        create_mock = Mock(return_value=types.SimpleNamespace(text="hello"))
+        fake_client = types.SimpleNamespace(
+            audio=types.SimpleNamespace(transcriptions=types.SimpleNamespace(create=create_mock))
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio_file = Path(temp_dir) / "meeting.wav"
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            audio_file.write_bytes(b"audio")
+            vocabulary_file.write_text("organization_terms:\n  - Agent Works\n", encoding="utf-8")
+
+            with patch.object(transcribe, "ensure_audio_file"), patch.object(
+                transcribe, "create_openai_client", return_value=fake_client
+            ), patch.dict(os.environ, {"STT_VOCABULARY_PATH": str(vocabulary_file)}):
+                result = transcribe.transcribe_chunk(audio_file)
+
+        self.assertEqual(result, "hello")
+        self.assertIn("Agent Works", create_mock.call_args.kwargs["prompt"])
+
     def test_call_diarized_transcription_provider_uses_chunk_verification(self) -> None:
         """diarized chunk 호출도 OpenAI 호출 전 chunk 검증을 거칩니다."""
         create_mock = Mock(return_value={"segments": [{"speaker": "Speaker 1", "text": "회의를 시작합니다."}]})
@@ -725,6 +861,59 @@ class TranscribeTests(unittest.TestCase):
 
         validate_mock.assert_called_once()
         self.assertEqual(validate_mock.call_args.args[1], "diarized")
+
+    def test_diarized_transcription_skips_vocabulary_hint_when_not_supported(self) -> None:
+        """diarized 요청이 prompt를 지원하지 않는다고 판단되면 hint를 건너뜁니다."""
+        create_mock = Mock(return_value={"segments": [{"speaker": "Speaker 1", "text": "회의를 시작합니다."}]})
+        fake_client = types.SimpleNamespace(
+            audio=types.SimpleNamespace(transcriptions=types.SimpleNamespace(create=create_mock))
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio_file = Path(temp_dir) / "meeting.wav"
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            audio_file.write_bytes(b"audio")
+            vocabulary_file.write_text("organization_terms:\n  - BigxData\n", encoding="utf-8")
+
+            with patch.object(transcribe, "ensure_audio_file"), patch.object(
+                transcribe, "create_openai_client", return_value=fake_client
+            ), patch.object(
+                transcribe, "transcription_request_supports_vocabulary_prompt", return_value=False
+            ), patch.dict(os.environ, {"STT_VOCABULARY_PATH": str(vocabulary_file)}):
+                transcribe.call_diarized_transcription_provider(audio_file)
+
+        self.assertNotIn("prompt", create_mock.call_args.kwargs)
+
+    def test_diarized_transcription_retries_without_hint_when_provider_rejects_prompt(self) -> None:
+        """diarized provider가 prompt를 거절하면 hint 없이 한 번 재시도합니다."""
+
+        class UnsupportedPromptError(Exception):
+            body = {"error": {"message": "unknown parameter: prompt"}}
+
+        create_mock = Mock(
+            side_effect=[
+                UnsupportedPromptError("unknown parameter: prompt"),
+                {"segments": [{"speaker": "Speaker 1", "text": "회의를 시작합니다."}]},
+            ]
+        )
+        fake_client = types.SimpleNamespace(
+            audio=types.SimpleNamespace(transcriptions=types.SimpleNamespace(create=create_mock))
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio_file = Path(temp_dir) / "meeting.wav"
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            audio_file.write_bytes(b"audio")
+            vocabulary_file.write_text("organization_terms:\n  - BigxData\n", encoding="utf-8")
+
+            with patch.object(transcribe, "ensure_audio_file"), patch.object(
+                transcribe, "create_openai_client", return_value=fake_client
+            ), patch.dict(os.environ, {"STT_VOCABULARY_PATH": str(vocabulary_file)}):
+                segments = transcribe.call_diarized_transcription_provider(audio_file)
+
+        self.assertEqual(segments, [{"speaker": "Speaker 1", "text": "회의를 시작합니다."}])
+        self.assertIn("prompt", create_mock.call_args_list[0].kwargs)
+        self.assertNotIn("prompt", create_mock.call_args_list[1].kwargs)
 
     def test_diarized_input_too_large_retries_with_smaller_chunks(self) -> None:
         """input_too_large 오류는 실패한 diarized chunk를 더 작게 나눠 재시도합니다."""
