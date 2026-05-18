@@ -134,6 +134,32 @@ class TranscribeTests(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_TRANSCRIPTION_MODEL": "custom-stt"}):
             self.assertEqual(transcribe.get_transcription_model(), "custom-stt")
 
+    def test_transcribe_audio_uses_openai_provider_by_default(self) -> None:
+        """기본 STT provider는 기존 OpenAI workflow를 그대로 호출합니다."""
+        audio_file = Path("meeting.wav")
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(
+            transcribe,
+            "_transcribe_audio_openai",
+            return_value="plain text",
+        ) as openai_mock:
+            transcript = transcribe.transcribe_audio(audio_file)
+
+        self.assertEqual(transcript, "plain text")
+        openai_mock.assert_called_once_with(audio_file, mode="plain")
+
+    def test_transcribe_audio_local_whisper_placeholder_fails_cleanly(self) -> None:
+        """local_whisper provider는 실제 런타임 연결 전까지 명확한 placeholder 오류를 냅니다."""
+        with patch.dict(os.environ, {"STT_PROVIDER": "local_whisper"}):
+            with self.assertRaisesRegex(NotImplementedError, "local_whisper is not implemented yet"):
+                transcribe.transcribe_audio(Path("meeting.wav"))
+
+    def test_transcribe_audio_rejects_unknown_stt_provider(self) -> None:
+        """지원하지 않는 STT_PROVIDER 값은 명확히 거절합니다."""
+        with patch.dict(os.environ, {"STT_PROVIDER": "unknown"}):
+            with self.assertRaisesRegex(ValueError, "Unsupported STT_PROVIDER"):
+                transcribe.transcribe_audio(Path("meeting.wav"))
+
     def test_get_diarized_transcription_model_uses_env_override(self) -> None:
         """환경 변수로 diarized STT 모델명을 덮어쓸 수 있습니다."""
         with patch.dict(os.environ, {"OPENAI_DIARIZED_TRANSCRIPTION_MODEL": "custom-diarized-stt"}):

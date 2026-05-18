@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from pydub import AudioSegment
 
+from backend.services.stt import get_stt_provider
 from summarization.models import NormalizedTranscript, TranscriptUtterance
 from utils import AudioChunkConfig, cleanup_temp_files, ensure_audio_file, get_audio_format, split_audio_if_needed
 
@@ -322,6 +323,14 @@ logger.warning("%s transcribe_import runtime_version=%s file=%s", get_trace_pref
 
 
 def transcribe_audio(
+    audio_files: Path | list[Path],
+    mode: Literal["plain", "diarized"] = "plain",
+) -> str | NormalizedTranscript:
+    """설정된 STT provider로 하나 이상의 오디오 파일을 전사합니다."""
+    return get_stt_provider(_transcribe_audio_openai).transcribe(audio_files, mode=mode)
+
+
+def _transcribe_audio_openai(
     audio_files: Path | list[Path],
     mode: Literal["plain", "diarized"] = "plain",
 ) -> str | NormalizedTranscript:
