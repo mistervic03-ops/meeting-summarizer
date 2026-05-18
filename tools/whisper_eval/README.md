@@ -86,6 +86,68 @@ docker run --rm --gpus all \
   whisper-eval-gpu /audio/test-audio.m4a --output-dir /outputs
 ```
 
+## Transformers Whisper GPU 실행
+
+Spark 서버는 `linux/arm64/v8` 환경입니다. Docker GPU passthrough와 CUDA 컨테이너의
+`nvidia-smi`는 정상 동작하지만, ARM64에서 CTranslate2 CUDA wheel 생태계가 아직
+불안정해 `ctranslate2.get_cuda_device_count()`가 0으로 남는 상황이 있었습니다.
+이 경로는 faster-whisper 평가 harness를 제거하지 않고, PyTorch CUDA 기반
+Transformers Whisper로 로컬 GPU STT 품질을 먼저 확인하기 위한 별도 평가 도구입니다.
+
+프로젝트 루트에서 이미지를 빌드합니다.
+
+```bash
+docker build -f tools/whisper_eval/Dockerfile.transformers-gpu -t transformers-whisper-gpu .
+```
+
+Torch CUDA preflight를 확인합니다.
+
+```bash
+docker run --rm --gpus all --entrypoint python3 transformers-whisper-gpu \
+  -c "import torch; print(torch.version); print(torch.cuda.is_available()); print(torch.cuda.device_count())"
+```
+
+GPU 이름까지 확인하려면 다음 명령을 사용합니다.
+
+```bash
+docker run --rm --gpus all --entrypoint python3 transformers-whisper-gpu \
+  -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
+```
+
+오디오 파일을 전사합니다.
+
+```bash
+docker run --rm --gpus all \
+  -v "$PWD/test-audio.m4a:/audio/test-audio.m4a:ro" \
+  -v "$PWD/tools/whisper_eval/outputs:/outputs" \
+  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+  transformers-whisper-gpu /audio/test-audio.m4a --output-dir /outputs
+```
+
+기본값은 다음과 같습니다.
+
+```text
+model=openai/whisper-large-v3
+device=cuda
+torch_dtype=float16
+language=ko
+task=transcribe
+```
+
+모델이나 dtype을 바꿔 비교할 수 있습니다.
+
+```bash
+docker run --rm --gpus all \
+  -v "$PWD/test-audio.m4a:/audio/test-audio.m4a:ro" \
+  -v "$PWD/tools/whisper_eval/outputs:/outputs" \
+  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+  transformers-whisper-gpu /audio/test-audio.m4a \
+    --model openai/whisper-large-v3 \
+    --torch-dtype float16 \
+    --language ko \
+    --output-dir /outputs
+```
+
 ## 권장 모델
 
 - `distil-large-v3`: 첫 GPU 품질/속도 평가 기본값입니다.
