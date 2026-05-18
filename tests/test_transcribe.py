@@ -33,10 +33,17 @@ def import_transcribe_with_fakes():
 
 
 transcribe = import_transcribe_with_fakes()
+from backend.services.stt import providers as stt_providers
 
 
 class TranscribeTests(unittest.TestCase):
     """OpenAI API를 호출하지 않고 STT 흐름을 테스트합니다."""
+
+    def setUp(self) -> None:
+        """테스트 간 local Whisper model cache가 섞이지 않게 초기화합니다."""
+        stt_providers.LocalWhisperProvider._model_cache.clear()
+        transcribe.get_stt_provider.__globals__["LocalWhisperProvider"]._model_cache.clear()
+        sys.modules.pop("faster_whisper", None)
 
     def test_normalize_audio_files_accepts_single_path_or_list(self) -> None:
         """단일 Path와 Path 리스트를 모두 리스트 형태로 정규화합니다."""
@@ -148,11 +155,74 @@ class TranscribeTests(unittest.TestCase):
         self.assertEqual(transcript, "plain text")
         openai_mock.assert_called_once_with(audio_file, mode="plain")
 
-    def test_transcribe_audio_local_whisper_placeholder_fails_cleanly(self) -> None:
-        """local_whisper provider는 실제 런타임 연결 전까지 명확한 placeholder 오류를 냅니다."""
-        with patch.dict(os.environ, {"STT_PROVIDER": "local_whisper"}):
-            with self.assertRaisesRegex(NotImplementedError, "local_whisper is not implemented yet"):
+    def test_transcribe_audio_local_whisper_uses_mocked_faster_whisper(self) -> None:
+        """local_whisper provider는 faster-whisper 모델을 지연 로드해 plain transcript를 반환합니다."""
+        created_models: list[tuple[str, str, str]] = []
+        transcribed_paths: list[tuple[str, str]] = []
+
+        class FakeWhisperModel:
+            def __init__(self, model_name: str, device: str, compute_type: str) -> None:
+                created_models.append((model_name, device, compute_type))
+
+            def transcribe(self, audio_path: str, language: str):
+                transcribed_paths.append((audio_path, language))
+                return [types.SimpleNamespace(text=" 첫 번째 문장 "), types.SimpleNamespace(text="두 번째 문장")], object()
+
+        stt_providers.LocalWhisperProvider._model_cache.clear()
+        fake_faster_whisper = types.SimpleNamespace(WhisperModel=FakeWhisperModel)
+        env = {
+            "STT_PROVIDER": "local_whisper",
+            "LOCAL_WHISPER_MODEL": "tiny",
+            "LOCAL_WHISPER_DEVICE": "cpu",
+            "LOCAL_WHISPER_COMPUTE_TYPE": "int8",
+            "LOCAL_WHISPER_LANGUAGE": "ko",
+        }
+
+        with patch.dict(os.environ, env, clear=True), patch.dict(sys.modules, {"faster_whisper": fake_faster_whisper}):
+            transcript = transcribe.transcribe_audio(Path("meeting.wav"))
+
+        self.assertEqual(transcript, "첫 번째 문장 두 번째 문장")
+        self.assertEqual(created_models, [("tiny", "cpu", "int8")])
+        self.assertEqual(transcribed_paths, [("meeting.wav", "ko")])
+
+    def test_transcribe_audio_local_whisper_reuses_cached_model(self) -> None:
+        """local_whisper provider는 같은 설정의 모델을 요청마다 다시 로드하지 않습니다."""
+        model_load_count = 0
+
+        class FakeWhisperModel:
+            def __init__(self, model_name: str, device: str, compute_type: str) -> None:
+                nonlocal model_load_count
+                model_load_count += 1
+
+            def transcribe(self, audio_path: str, language: str):
+                return [types.SimpleNamespace(text=Path(audio_path).stem)], object()
+
+        stt_providers.LocalWhisperProvider._model_cache.clear()
+        fake_faster_whisper = types.SimpleNamespace(WhisperModel=FakeWhisperModel)
+        env = {"STT_PROVIDER": "local_whisper", "LOCAL_WHISPER_MODEL": "tiny"}
+
+        with patch.dict(os.environ, env, clear=True), patch.dict(sys.modules, {"faster_whisper": fake_faster_whisper}):
+            self.assertEqual(transcribe.transcribe_audio(Path("one.wav")), "one")
+            self.assertEqual(transcribe.transcribe_audio(Path("two.wav")), "two")
+
+        self.assertEqual(model_load_count, 1)
+
+    def test_transcribe_audio_local_whisper_missing_dependency_fails_cleanly(self) -> None:
+        """faster-whisper가 없으면 설치 방법을 포함한 명확한 오류를 냅니다."""
+        stt_providers.LocalWhisperProvider._model_cache.clear()
+
+        with patch.dict(os.environ, {"STT_PROVIDER": "local_whisper"}, clear=True), patch.dict(
+            sys.modules,
+            {"faster_whisper": None},
+        ):
+            with self.assertRaisesRegex(RuntimeError, "requires faster-whisper"):
                 transcribe.transcribe_audio(Path("meeting.wav"))
+
+    def test_transcribe_audio_local_whisper_diarized_mode_fails_cleanly(self) -> None:
+        """local_whisper는 아직 diarized mode를 지원하지 않음을 명확히 알립니다."""
+        with patch.dict(os.environ, {"STT_PROVIDER": "local_whisper"}):
+            with self.assertRaisesRegex(NotImplementedError, "only supports plain transcription"):
+                transcribe.transcribe_audio(Path("meeting.wav"), mode="diarized")
 
     def test_transcribe_audio_rejects_unknown_stt_provider(self) -> None:
         """지원하지 않는 STT_PROVIDER 값은 명확히 거절합니다."""

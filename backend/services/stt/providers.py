@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import os
+import time
+import logging
 from pathlib import Path
-from typing import Callable, Literal, Protocol
+from threading import Lock
+from typing import Any, Callable, Literal, Protocol
 
 from summarization.models import NormalizedTranscript
 
 TranscriptionMode = Literal["plain", "diarized"]
+logger = logging.getLogger(__name__)
+
+DEFAULT_LOCAL_WHISPER_MODEL = "small"
+DEFAULT_LOCAL_WHISPER_DEVICE = "cpu"
+DEFAULT_LOCAL_WHISPER_COMPUTE_TYPE = "int8"
+DEFAULT_LOCAL_WHISPER_LANGUAGE = "ko"
 
 
 class TranscribeProvider(Protocol):
@@ -43,26 +52,136 @@ class OpenAITranscribeProvider:
 
 
 class LocalWhisperProvider:
-    """향후 Spark GPU local Whisper 경로를 연결할 placeholder provider입니다."""
+    """faster-whisper CPU 경로로 plain STT를 수행하는 provider입니다."""
 
     name = "local_whisper"
+    _model_cache: dict[tuple[str, str, str], Any] = {}
+    _model_lock = Lock()
 
     def transcribe(
         self,
         audio_files: Path | list[Path],
         mode: TranscriptionMode = "plain",
     ) -> str | NormalizedTranscript:
-        """아직 구현되지 않은 local Whisper 경로를 명확히 거절합니다."""
-        # TODO: Spark 서버 CUDA/faster-whisper 런타임 검증 후 이 provider에 실제 STT를 연결합니다.
-        raise NotImplementedError(
-            "STT_PROVIDER=local_whisper is not implemented yet. "
-            "Use STT_PROVIDER=openai until the local Whisper runtime is added."
+        """faster-whisper 로컬 모델로 plain transcript를 반환합니다."""
+        if mode != "plain":
+            raise NotImplementedError("STT_PROVIDER=local_whisper only supports plain transcription for now.")
+
+        model_name = get_local_whisper_model_name()
+        device = get_local_whisper_device()
+        compute_type = get_local_whisper_compute_type()
+        language = get_local_whisper_language()
+        model = self.get_model(model_name=model_name, device=device, compute_type=compute_type)
+        audio_paths = normalize_audio_files(audio_files)
+        started_at = time.perf_counter()
+        logger.info(
+            "stt_provider_selected provider=%s model=%s device=%s compute_type=%s language=%s file_count=%s",
+            self.name,
+            model_name,
+            device,
+            compute_type,
+            language,
+            len(audio_paths),
         )
+
+        transcripts = [self.transcribe_file(model, audio_path, language) for audio_path in audio_paths]
+        elapsed_seconds = time.perf_counter() - started_at
+        logger.info(
+            "local_whisper_transcription_complete model=%s device=%s compute_type=%s elapsed_seconds=%.3f",
+            model_name,
+            device,
+            compute_type,
+            elapsed_seconds,
+        )
+        return "\n\n".join(transcript.strip() for transcript in transcripts if transcript.strip())
+
+    @classmethod
+    def get_model(cls, model_name: str, device: str, compute_type: str) -> Any:
+        """faster-whisper 모델을 설정별로 한 번만 로드해 재사용합니다."""
+        cache_key = (model_name, device, compute_type)
+        if cache_key in cls._model_cache:
+            return cls._model_cache[cache_key]
+
+        with cls._model_lock:
+            if cache_key in cls._model_cache:
+                return cls._model_cache[cache_key]
+
+            WhisperModel = import_whisper_model()
+            started_at = time.perf_counter()
+            logger.info(
+                "local_whisper_model_load_start model=%s device=%s compute_type=%s",
+                model_name,
+                device,
+                compute_type,
+            )
+            # TODO: CUDA/faster-whisper 패키징이 확정되면 device=cuda 설정을 검증합니다.
+            model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            elapsed_seconds = time.perf_counter() - started_at
+            logger.info(
+                "local_whisper_model_load_complete model=%s device=%s compute_type=%s elapsed_seconds=%.3f",
+                model_name,
+                device,
+                compute_type,
+                elapsed_seconds,
+            )
+            cls._model_cache[cache_key] = model
+            return model
+
+    def transcribe_file(self, model: Any, audio_path: Path, language: str) -> str:
+        """단일 오디오 파일을 faster-whisper로 전사하고 segment text를 합칩니다."""
+        started_at = time.perf_counter()
+        segments, _info = model.transcribe(str(audio_path), language=language)
+        transcript = " ".join(getattr(segment, "text", "").strip() for segment in segments if getattr(segment, "text", "").strip())
+        logger.info(
+            "local_whisper_file_transcribed path=%s elapsed_seconds=%.3f",
+            audio_path,
+            time.perf_counter() - started_at,
+        )
+        return transcript
 
 
 def get_stt_provider_name() -> str:
     """환경 변수에서 STT provider 이름을 읽고 기본값 openai를 반환합니다."""
     return os.getenv("STT_PROVIDER", "openai").strip().lower() or "openai"
+
+
+def get_local_whisper_model_name() -> str:
+    """로컬 Whisper 모델명을 환경 변수 또는 안전한 CPU 기본값으로 반환합니다."""
+    return os.getenv("LOCAL_WHISPER_MODEL", DEFAULT_LOCAL_WHISPER_MODEL).strip() or DEFAULT_LOCAL_WHISPER_MODEL
+
+
+def get_local_whisper_device() -> str:
+    """로컬 Whisper 실행 device를 반환합니다."""
+    return os.getenv("LOCAL_WHISPER_DEVICE", DEFAULT_LOCAL_WHISPER_DEVICE).strip() or DEFAULT_LOCAL_WHISPER_DEVICE
+
+
+def get_local_whisper_compute_type() -> str:
+    """로컬 Whisper compute type을 반환합니다."""
+    return os.getenv("LOCAL_WHISPER_COMPUTE_TYPE", DEFAULT_LOCAL_WHISPER_COMPUTE_TYPE).strip() or DEFAULT_LOCAL_WHISPER_COMPUTE_TYPE
+
+
+def get_local_whisper_language() -> str:
+    """로컬 Whisper 전사 언어 힌트를 반환합니다."""
+    return os.getenv("LOCAL_WHISPER_LANGUAGE", DEFAULT_LOCAL_WHISPER_LANGUAGE).strip() or DEFAULT_LOCAL_WHISPER_LANGUAGE
+
+
+def normalize_audio_files(audio_files: Path | list[Path]) -> list[Path]:
+    """단일 Path 또는 Path 목록을 provider 내부 처리용 list로 정규화합니다."""
+    if isinstance(audio_files, Path):
+        return [audio_files]
+    return list(audio_files)
+
+
+def import_whisper_model() -> Any:
+    """faster-whisper WhisperModel을 지연 import하고 설치 안내를 제공합니다."""
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as exc:
+        raise RuntimeError(
+            "STT_PROVIDER=local_whisper requires faster-whisper. "
+            "Install it with `python3 -m pip install -r requirements.txt` or `python3 -m pip install faster-whisper`."
+        ) from exc
+    return WhisperModel
 
 
 def get_stt_provider(
