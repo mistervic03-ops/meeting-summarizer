@@ -10,6 +10,7 @@ from pydantic import BaseModel
 JobStatus = Literal["pending", "processing", "completed", "failed"]
 Confidence = Literal["high", "low"]
 DecisionStatus = Literal["확정", "미확정"]
+MeetingType = Literal["execution", "customer_meeting", "technical_review", "brainstorming", "general"]
 
 
 class JobCreateResponse(BaseModel):
@@ -17,6 +18,44 @@ class JobCreateResponse(BaseModel):
 
     job_id: str
     status: JobStatus
+
+
+class TranscriptUtterancePayload(BaseModel):
+    """speaker-aware transcript의 단일 발화 payload입니다."""
+
+    utterance_id: Optional[str] = None
+    speaker: Optional[str] = None
+    text: str
+    start_ms: Optional[int] = None
+    end_ms: Optional[int] = None
+
+
+class StructuredTranscriptPayload(BaseModel):
+    """speaker-aware transcript payload입니다."""
+
+    utterances: list[TranscriptUtterancePayload]
+
+
+class TranscriptJobRequest(BaseModel):
+    """검토 또는 수정된 transcript로 회의록 생성을 시작하는 요청 모델입니다."""
+
+    filename: str = "transcript.txt"
+    transcript: str
+    context: str = ""
+    meeting_type: MeetingType = "general"
+    structured_transcript: Optional[StructuredTranscriptPayload] = None
+
+
+class TranscriptResultResponse(BaseModel):
+    """STT 완료 후 transcript 검토 화면에 반환하는 응답 모델입니다."""
+
+    job_id: str
+    filename: str
+    meeting_type: MeetingType = "general"
+    transcript: str
+    context: str = ""
+    stt_seconds: Optional[float] = None
+    structured_transcript: Optional[StructuredTranscriptPayload] = None
 
 
 class JobStatusResponse(BaseModel):
@@ -28,6 +67,11 @@ class JobStatusResponse(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
     error: Optional[str] = None
+    progress: int = 0
+    stage: str = "업로드 대기"
+    message: str = "오디오 파일을 기다리고 있습니다."
+    stt_seconds: Optional[float] = None
+    summary_seconds: Optional[float] = None
 
 
 class ActionItemResponse(BaseModel):
@@ -51,6 +95,7 @@ class JobResultResponse(BaseModel):
 
     job_id: str
     filename: str
+    meeting_type: MeetingType = "general"
     transcript: str
     minutes: str
     action_items: list[ActionItemResponse] = []

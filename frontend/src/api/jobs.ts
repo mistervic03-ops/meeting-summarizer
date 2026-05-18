@@ -1,4 +1,12 @@
-import { CreateJobPayload, CreateJobResponse, JobResult, JobStatusResponse } from "./types";
+import {
+  CreateJobPayload,
+  CreateJobResponse,
+  CreateTranscriptJobPayload,
+  CreateTranscriptionJobPayload,
+  JobResult,
+  JobStatusResponse,
+  TranscriptResult
+} from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 const CONNECTION_ERROR_MESSAGE =
@@ -10,7 +18,7 @@ const CONNECTION_ERROR_MESSAGE =
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null);
-    throw new Error(errorBody?.detail || "API 요청에 실패했습니다.");
+    throw new Error(errorBody?.detail || "요청을 완료하지 못했습니다.");
   }
 
   return response.json() as Promise<T>;
@@ -38,6 +46,7 @@ async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promi
 export async function createJob(payload: CreateJobPayload): Promise<CreateJobResponse> {
   const formData = new FormData();
   formData.append("audio_file", payload.audioFile);
+  formData.append("meeting_type", payload.meetingType ?? "execution");
 
   if (payload.contextFile) {
     formData.append("context_file", payload.contextFile);
@@ -46,6 +55,38 @@ export async function createJob(payload: CreateJobPayload): Promise<CreateJobRes
   return fetchJson<CreateJobResponse>(`${API_BASE_URL}/jobs`, {
     method: "POST",
     body: formData
+  });
+}
+
+/**
+ * Creates a transcription job from the selected audio and optional context file.
+ */
+export async function createTranscriptionJob(payload: CreateTranscriptionJobPayload): Promise<CreateJobResponse> {
+  const formData = new FormData();
+  formData.append("audio_file", payload.audioFile);
+  formData.append("transcription_mode", payload.transcriptionMode ?? "plain");
+  formData.append("meeting_type", payload.meetingType ?? "execution");
+
+  if (payload.contextFile) {
+    formData.append("context_file", payload.contextFile);
+  }
+
+  return fetchJson<CreateJobResponse>(`${API_BASE_URL}/transcriptions`, {
+    method: "POST",
+    body: formData
+  });
+}
+
+/**
+ * Creates a meeting processing job from a reviewed or edited transcript.
+ */
+export async function createTranscriptJob(payload: CreateTranscriptJobPayload): Promise<CreateJobResponse> {
+  return fetchJson<CreateJobResponse>(`${API_BASE_URL}/transcript-jobs`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
   });
 }
 
@@ -61,6 +102,13 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
  */
 export async function getJobResult(jobId: string): Promise<JobResult> {
   return fetchJson<JobResult>(`${API_BASE_URL}/jobs/${jobId}/result`);
+}
+
+/**
+ * Gets the transcript produced by a completed transcription job.
+ */
+export async function getTranscriptResult(jobId: string): Promise<TranscriptResult> {
+  return fetchJson<TranscriptResult>(`${API_BASE_URL}/jobs/${jobId}/transcript`);
 }
 
 /**

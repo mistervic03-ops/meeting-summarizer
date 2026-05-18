@@ -1,4 +1,4 @@
-"""CLI entry point for the Meeting Summarizer pipeline."""
+"""Meeting Summarizer 파이프라인의 CLI 진입점입니다."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments for the meeting summarizer."""
+    """회의록 생성 CLI 인자를 파싱합니다."""
     # CLI에서는 오디오 파일 경로 하나만 받아 전체 파이프라인을 실행합니다.
     parser = argparse.ArgumentParser(
         description="Transcribe a meeting audio file and save Korean meeting minutes."
@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_output_path(audio_file: Path) -> Path:
-    """Build the output path next to the original audio file."""
+    """원본 오디오 파일 옆에 저장할 회의록 경로를 만듭니다."""
     # 같은 이름의 회의록이 없으면 가장 읽기 쉬운 기본 파일명을 사용합니다.
     base_output_path = audio_file.parent / f"{audio_file.stem}_회의록.txt"
     if not base_output_path.exists():
@@ -38,7 +38,7 @@ def build_output_path(audio_file: Path) -> Path:
 
 
 def run_pipeline(audio_file: Path) -> Path:
-    """Run the transcription and summarization pipeline, then save the result."""
+    """STT와 요약 파이프라인을 실행한 뒤 결과를 저장합니다."""
     from dotenv import load_dotenv
 
     from summarize import summarize_transcript
@@ -66,7 +66,7 @@ def run_pipeline(audio_file: Path) -> Path:
 
 
 def main() -> int:
-    """Load environment variables and start the CLI pipeline."""
+    """환경 변수를 로드하고 CLI 파이프라인을 시작합니다."""
     try:
         args = parse_args()
         run_pipeline(args.audio_file)

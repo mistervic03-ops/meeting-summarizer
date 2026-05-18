@@ -1,21 +1,9 @@
 """회의록 생성 API 서버의 FastAPI 진입점입니다."""
 
-import sys
-from pathlib import Path
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# `cd backend` 실행 시에도 프로젝트 루트의 기존 모듈을 import할 수 있게 합니다.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-try:
-    from backend.api.routes import router
-except ModuleNotFoundError:
-    # `cd backend && uvicorn main:app` 실행도 지원하기 위해 로컬 import를 허용합니다.
-    from api.routes import router
+from backend.api.routes import router
 
 
 def create_app() -> FastAPI:

@@ -7,16 +7,12 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 from fastapi import UploadFile
 
-try:
-    from backend.schemas import JobStatus
-except ModuleNotFoundError:
-    # `cd backend` 실행 시에도 동일한 저장소 모듈을 사용할 수 있게 합니다.
-    from schemas import JobStatus
+from backend.schemas import JobStatus
 
 UPLOAD_ROOT = Path(tempfile.gettempdir()) / "meeting_summarizer_api"
 JOBS: dict[str, "JobRecord"] = {}
@@ -28,6 +24,7 @@ class PipelineResult:
 
     transcript: str
     minutes: str
+    structured_transcript: dict[str, Any] | None = None
     action_items: list[dict[str, Any]] = field(default_factory=list)
     summary_facts: list[str] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
@@ -43,9 +40,16 @@ class JobRecord:
     filename: str
     status: JobStatus = "pending"
     created_at: datetime = field(default_factory=datetime.now)
-    completed_at: Optional[datetime] = None
-    error: Optional[str] = None
-    result: Optional[PipelineResult] = None
+    completed_at: datetime | None = None
+    error: str | None = None
+    result: PipelineResult | None = None
+    progress: int = 0
+    stage: str = "업로드 대기"
+    message: str = "오디오 파일을 기다리고 있습니다."
+    stt_seconds: float | None = None
+    summary_seconds: float | None = None
+    context: str = ""
+    meeting_type: str = "general"
 
 
 def create_job(filename: str) -> JobRecord:
@@ -56,7 +60,7 @@ def create_job(filename: str) -> JobRecord:
     return job
 
 
-def get_job(job_id: str) -> Optional[JobRecord]:
+def get_job(job_id: str) -> JobRecord | None:
     """작업 ID로 작업 상태를 조회합니다."""
     return JOBS.get(job_id)
 
@@ -84,30 +88,84 @@ def mark_job_processing(job_id: str) -> None:
     job = require_job(job_id)
     job.status = "processing"
     job.error = None
+    job.progress = 10
+    job.stage = "파일 준비"
+    job.message = "오디오 파일을 확인하고 있습니다."
+
+
+def set_job_context(job_id: str, context: str) -> None:
+    """작업에서 사용할 팀 컨텍스트를 저장합니다."""
+    require_job(job_id).context = context
+
+
+def set_job_meeting_type(job_id: str, meeting_type: str) -> None:
+    """작업에서 사용할 회의 유형을 저장합니다."""
+    require_job(job_id).meeting_type = meeting_type or "general"
+
+
+def mark_job_progress(
+    job_id: str,
+    progress: int,
+    stage: str,
+    message: str,
+    stt_seconds: float | None = None,
+    summary_seconds: float | None = None,
+) -> None:
+    """작업의 현재 진행률과 사용자에게 보여줄 상태 메시지를 저장합니다."""
+    job = require_job(job_id)
+    job.progress = max(0, min(100, progress))
+    job.stage = stage
+    job.message = message
+
+    if stt_seconds is not None:
+        job.stt_seconds = stt_seconds
+    if summary_seconds is not None:
+        job.summary_seconds = summary_seconds
+
+
+def mark_job_transcribed(
+    job_id: str,
+    transcript: str,
+    structured_transcript: dict[str, Any] | None = None,
+) -> None:
+    """STT 결과를 저장하고 transcript 검토 가능 상태로 변경합니다."""
+    job = require_job(job_id)
+    job.status = "completed"
+    job.completed_at = datetime.now()
+    job.progress = 100
+    job.stage = "Transcript 준비 완료"
+    job.message = "음성 변환이 완료되었습니다. Transcript를 검토해 주세요."
+    job.result = PipelineResult(transcript=transcript, minutes="", structured_transcript=structured_transcript)
 
 
 def mark_job_completed(
     job_id: str,
     transcript: str,
-    minutes: str,
-    action_items: Optional[list[dict[str, Any]]] = None,
-    summary_facts: Optional[list[str]] = None,
-    decisions: Optional[list[dict[str, Any]]] = None,
-    speaker_highlights: Optional[list[str]] = None,
-    warnings: Optional[list[str]] = None,
+    summary: dict[str, Any],
+    structured_transcript: dict[str, Any] | None = None,
 ) -> None:
     """작업 결과를 저장하고 완료 상태로 변경합니다."""
     job = require_job(job_id)
     job.status = "completed"
     job.completed_at = datetime.now()
+    job.progress = 100
+    job.stage = "완료"
+    job.message = "회의록 생성이 완료되었습니다."
+    action_items = summary.get("action_items")
+    summary_facts = summary.get("summary_facts")
+    decisions = summary.get("decisions")
+    speaker_highlights = summary.get("speaker_highlights")
+    warnings = summary.get("warnings")
+
     job.result = PipelineResult(
         transcript=transcript,
-        minutes=minutes,
-        action_items=action_items or [],
-        summary_facts=summary_facts or [],
-        decisions=decisions or [],
-        speaker_highlights=speaker_highlights or [],
-        warnings=warnings or [],
+        minutes=summary.get("minutes") if isinstance(summary.get("minutes"), str) else "",
+        structured_transcript=structured_transcript,
+        action_items=[item for item in action_items if isinstance(item, dict)] if isinstance(action_items, list) else [],
+        summary_facts=[item for item in summary_facts if isinstance(item, str)] if isinstance(summary_facts, list) else [],
+        decisions=[item for item in decisions if isinstance(item, dict)] if isinstance(decisions, list) else [],
+        speaker_highlights=[item for item in speaker_highlights if isinstance(item, str)] if isinstance(speaker_highlights, list) else [],
+        warnings=[item for item in warnings if isinstance(item, str)] if isinstance(warnings, list) else [],
     )
 
 
@@ -117,6 +175,8 @@ def mark_job_failed(job_id: str, error: str) -> None:
     job.status = "failed"
     job.completed_at = datetime.now()
     job.error = error
+    job.stage = "실패"
+    job.message = "회의록 생성 중 문제가 발생했습니다."
 
 
 def cleanup_job_files(job_id: str) -> None:

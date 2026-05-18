@@ -1,4 +1,4 @@
-"""Unit tests for the CLI pipeline module."""
+"""CLI 파이프라인 모듈 단위 테스트입니다."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import main
 
 
 class MainTests(unittest.TestCase):
-    """Test CLI path handling and pipeline orchestration."""
+    """CLI 경로 처리와 파이프라인 흐름을 테스트합니다."""
 
     def test_build_output_path_avoids_overwrite(self) -> None:
         """기존 회의록 파일이 있으면 번호가 붙은 새 경로를 반환합니다."""

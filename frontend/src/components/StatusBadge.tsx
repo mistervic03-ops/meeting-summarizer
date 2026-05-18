@@ -4,9 +4,9 @@ import { JobStatus } from "../api/types";
 const STATUS_LABELS: Record<JobStatus, string> = {
   idle: "대기",
   pending: "준비 중",
-  processing: "처리 중",
+  processing: "진행 중",
   completed: "완료",
-  failed: "실패"
+  failed: "오류"
 };
 
 interface StatusBadgeProps {

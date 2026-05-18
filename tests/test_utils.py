@@ -1,4 +1,4 @@
-"""Unit tests for audio utility helpers."""
+"""오디오 유틸리티 보조 함수 단위 테스트입니다."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 class FakeAudioSegment:
-    """Small fake that behaves like a pydub AudioSegment for unit tests."""
+    """단위 테스트에서 pydub AudioSegment처럼 동작하는 작은 fake입니다."""
 
     def __init__(self, duration_ms: int = 10_000) -> None:
         self.duration_ms = duration_ms
@@ -38,7 +38,7 @@ class FakeAudioSegment:
 
 
 def import_utils_with_fake_pydub():
-    """Import utils.py with a fake pydub module."""
+    """fake pydub 모듈로 utils.py를 import합니다."""
     fake_pydub = types.SimpleNamespace(AudioSegment=FakeAudioSegment)
 
     with patch.dict(sys.modules, {"pydub": fake_pydub}):
@@ -50,7 +50,7 @@ utils = import_utils_with_fake_pydub()
 
 
 class UtilsTests(unittest.TestCase):
-    """Test file validation, splitting decisions, and cleanup behavior."""
+    """파일 검증, 분할 판단, 정리 동작을 테스트합니다."""
 
     def test_ensure_audio_file_accepts_supported_file(self) -> None:
         """지원되는 확장자의 실제 파일은 검증을 통과합니다."""
@@ -90,7 +90,22 @@ class UtilsTests(unittest.TestCase):
             ) as split_mock:
                 self.assertEqual(utils.split_audio_if_needed(audio_file), [chunk_path])
 
-            split_mock.assert_called_once_with(audio_file)
+            split_mock.assert_called_once_with(audio_file, chunk_config=utils.AudioChunkConfig())
+
+    def test_split_audio_if_needed_uses_fixed_chunk_config_even_under_size_limit(self) -> None:
+        """시간 기준 chunk 설정이 있으면 파일 크기와 별개로 분할 경로를 사용합니다."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio_file = Path(temp_dir) / "meeting.wav"
+            audio_file.write_bytes(b"audio")
+            chunk_path = Path(temp_dir) / "chunk.wav"
+            chunk_config = utils.AudioChunkConfig(duration_seconds=240, overlap_seconds=5)
+
+            with patch.object(utils, "MAX_AUDIO_SIZE_BYTES", 10), patch.object(
+                utils, "split_audio_file", return_value=[chunk_path]
+            ) as split_mock:
+                self.assertEqual(utils.split_audio_if_needed(audio_file, chunk_config=chunk_config), [chunk_path])
+
+            split_mock.assert_called_once_with(audio_file, chunk_config=chunk_config)
 
     def test_cleanup_temp_files_removes_files_and_temp_directory(self) -> None:
         """임시 청크 파일과 비어 있는 임시 디렉터리를 정리합니다."""
@@ -164,6 +179,41 @@ class UtilsTests(unittest.TestCase):
                 chunks = utils.split_audio_file(audio_file)
 
         self.assertEqual(chunks, [chunk_one, chunk_two])
+
+    def test_export_audio_chunks_applies_fixed_duration_and_overlap(self) -> None:
+        """시간 기준 분할은 작은 overlap을 반영해 다음 chunk 시작점을 계산합니다."""
+        fake_audio = FakeAudioSegment(10_000)
+        observed_ranges: list[tuple[int, int]] = []
+
+        def fake_export_chunk_under_size(
+            audio: FakeAudioSegment,
+            start_ms: int,
+            end_ms: int,
+            output_dir: Path,
+            source_file: Path,
+            chunk_index: int,
+            audio_format: str,
+        ) -> tuple[Path, int]:
+            observed_ranges.append((start_ms, end_ms))
+            chunk_path = output_dir / f"chunk_{chunk_index}.wav"
+            chunk_path.write_bytes(b"audio")
+            return chunk_path, end_ms
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_file = Path(temp_dir) / "meeting.wav"
+            source_file.write_bytes(b"audio")
+
+            with patch.object(utils, "export_chunk_under_size", side_effect=fake_export_chunk_under_size):
+                chunks = utils.export_audio_chunks(
+                    audio=fake_audio,
+                    source_file=source_file,
+                    output_dir=Path(temp_dir),
+                    audio_format="wav",
+                    chunk_config=utils.AudioChunkConfig(duration_seconds=4, overlap_seconds=1),
+                )
+
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(observed_ranges, [(0, 4_000), (3_000, 7_000), (6_000, 10_000)])
 
 
 if __name__ == "__main__":

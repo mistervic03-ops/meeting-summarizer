@@ -1,4 +1,6 @@
 export type JobStatus = "idle" | "pending" | "processing" | "completed" | "failed";
+export type TranscriptionMode = "plain" | "diarized";
+export type MeetingType = "execution" | "customer_meeting" | "technical_review" | "brainstorming" | "general";
 
 export interface CreateJobResponse {
   job_id: string;
@@ -12,11 +14,17 @@ export interface JobStatusResponse {
   created_at: string;
   completed_at?: string | null;
   error?: string | null;
+  progress: number;
+  stage: string;
+  message: string;
+  stt_seconds?: number | null;
+  summary_seconds?: number | null;
 }
 
 export interface JobResult {
   job_id: string;
   filename: string;
+  meeting_type?: MeetingType;
   transcript?: string;
   minutes: string;
   action_items?: ActionItem[];
@@ -26,9 +34,47 @@ export interface JobResult {
   warnings?: string[];
 }
 
+export interface TranscriptResult {
+  job_id: string;
+  filename: string;
+  meeting_type?: MeetingType;
+  transcript: string;
+  context?: string;
+  stt_seconds?: number | null;
+  structured_transcript?: StructuredTranscript | null;
+}
+
 export interface CreateJobPayload {
   audioFile: File;
   contextFile?: File | null;
+  meetingType?: MeetingType;
+}
+
+export interface CreateTranscriptionJobPayload {
+  audioFile: File;
+  contextFile?: File | null;
+  meetingType?: MeetingType;
+  transcriptionMode?: TranscriptionMode;
+}
+
+export interface CreateTranscriptJobPayload {
+  filename: string;
+  transcript: string;
+  context?: string;
+  meeting_type?: MeetingType;
+  structured_transcript?: StructuredTranscript | null;
+}
+
+export interface TranscriptUtterance {
+  utterance_id?: string | null;
+  speaker?: string | null;
+  text: string;
+  start_ms?: number | null;
+  end_ms?: number | null;
+}
+
+export interface StructuredTranscript {
+  utterances: TranscriptUtterance[];
 }
 
 export interface ActionItem {

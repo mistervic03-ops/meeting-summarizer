@@ -60,6 +60,20 @@
 - FastAPI 백엔드: `backend/`
 - React 프론트: `frontend/` (React + TypeScript + Vite)
 
+## 실행 방법
+
+프로젝트 루트에서 Python 가상환경을 활성화합니다.
+
+```bash
+source .venv/bin/activate
+```
+
+FastAPI 백엔드는 프로젝트 루트에서 실행합니다.
+
+```bash
+uvicorn backend.main:app --reload
+```
+
 ## 코딩 규칙
 
 - API 키는 `.env`에서만 관리합니다.
@@ -68,6 +82,7 @@
 - 각 단계 소요 시간을 로깅합니다.
 - 추임새는 단독 토큰일 때만 제거하고, 맥락이 있으면 유지합니다.
 - `summarize.py` 또는 요약 엔진 관련 작업 전에는 `docs/SUMMARIZATION_ENGINE.md`를 먼저 읽습니다.
+- 코드 주석과 docstring은 모두 한글로 작성합니다.
 - Streamlit CSS에서는 `::after`, `::before`를 사용하지 않습니다.
 - 주석 정리는 삭제가 아니라 더 명확하게 다듬는 것을 의미합니다.
 - 파일 처리 후 임시 파일은 반드시 정리합니다.

@@ -1,4 +1,4 @@
-"""Streamlit UI for the Meeting Summarizer internal tool."""
+"""Meeting Summarizer 내부 도구의 Streamlit UI입니다."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ VIP 프로젝트: 주요 클라이언트 프로젝트명
 
 
 class ProcessResult(NamedTuple):
-    """Meeting minutes generation result for UI storage."""
+    """UI 저장용 회의록 생성 결과입니다."""
 
     meeting_minutes: str
     download_filename: str
@@ -66,14 +66,14 @@ class ProcessResult(NamedTuple):
 
 
 class ProcessTimings(NamedTuple):
-    """Elapsed processing times in seconds."""
+    """각 처리 단계의 소요 시간을 초 단위로 저장합니다."""
 
     stt_seconds: float
     summary_seconds: float
     total_seconds: float
 
     def as_dict(self) -> dict[str, float]:
-        """Return timings as a session-state friendly dictionary."""
+        """session state에 저장하기 쉬운 dict 형태로 소요 시간을 반환합니다."""
         return {
             "stt_seconds": self.stt_seconds,
             "summary_seconds": self.summary_seconds,
@@ -82,7 +82,7 @@ class ProcessTimings(NamedTuple):
 
 
 class ResultSections(NamedTuple):
-    """Meeting minutes sections used by the result preview UI."""
+    """결과 미리보기 UI에서 사용하는 회의록 섹션입니다."""
 
     warnings: str
     quick_summary: str
@@ -93,7 +93,7 @@ class ResultSections(NamedTuple):
 
 
 def configure_page() -> None:
-    """Configure Streamlit page metadata and base layout."""
+    """Streamlit 페이지 메타데이터와 기본 레이아웃을 설정합니다."""
     # Streamlit 전역 설정은 가장 먼저 호출해야 합니다.
     st.set_page_config(page_title=APP_TITLE, layout="centered")
     render_app_styles()
@@ -104,13 +104,13 @@ def configure_page() -> None:
 
 
 def render_app_styles() -> None:
-    """Render small CSS refinements for a more balanced Streamlit UI."""
+    """Streamlit UI 균형을 맞추기 위한 CSS 보정을 렌더링합니다."""
     # Streamlit 기본 컴포넌트의 여백과 버튼 높이를 앱 테마에 맞게 보정합니다.
     st.markdown(f"<style>{build_app_styles()}</style>", unsafe_allow_html=True)
 
 
 def build_app_styles() -> str:
-    """Build the complete CSS payload for Streamlit component refinements."""
+    """Streamlit 컴포넌트 보정에 사용할 전체 CSS를 만듭니다."""
     return "\n".join(
         [
             build_layout_styles(),
@@ -125,7 +125,7 @@ def build_app_styles() -> str:
 
 
 def build_layout_styles() -> str:
-    """Build CSS for the main page title and high-level spacing."""
+    """메인 페이지 제목과 큰 여백 조정을 위한 CSS를 만듭니다."""
     return f"""
         .main-title {{
             color: {COLOR_PRIMARY};
@@ -138,7 +138,7 @@ def build_layout_styles() -> str:
 
 
 def build_sidebar_styles() -> str:
-    """Build CSS that keeps the sidebar dark regardless of Streamlit theme colors."""
+    """Streamlit 테마 색상과 무관하게 사이드바를 어둡게 유지하는 CSS를 만듭니다."""
     return f"""
         section[data-testid="stSidebar"] {{
             background-color: {COLOR_SIDEBAR};
@@ -162,7 +162,7 @@ def build_sidebar_styles() -> str:
 
 
 def build_card_styles() -> str:
-    """Build CSS for bordered Streamlit containers used as cards."""
+    """카드처럼 쓰는 테두리 있는 Streamlit 컨테이너 CSS를 만듭니다."""
     return f"""
         div[data-testid="stVerticalBlockBorderWrapper"] {{
             background: {COLOR_SURFACE} !important;
@@ -179,7 +179,7 @@ def build_card_styles() -> str:
 
 
 def build_uploader_styles() -> str:
-    """Build CSS for the file uploader dropzone and nested text layers."""
+    """파일 업로더 dropzone과 내부 텍스트 레이어 CSS를 만듭니다."""
     return f"""
         div[data-testid="stFileUploaderDropzone"],
         div[data-testid="stFileUploaderDropzone"] > div,
@@ -231,7 +231,7 @@ def build_uploader_styles() -> str:
 
 
 def build_input_styles() -> str:
-    """Build CSS that keeps text inputs readable on the purple app theme."""
+    """보라색 앱 테마에서도 텍스트 입력을 읽기 쉽게 유지하는 CSS를 만듭니다."""
     return f"""
         div[data-baseweb="textarea"],
         div[data-baseweb="input"] {{
@@ -271,7 +271,7 @@ def build_input_styles() -> str:
 
 
 def build_button_styles() -> str:
-    """Build CSS for Streamlit buttons."""
+    """Streamlit 버튼용 CSS를 만듭니다."""
     return f"""
         button[kind="primary"], button[kind="secondary"] {{
             min-height: 42px;
@@ -293,7 +293,7 @@ def build_button_styles() -> str:
 
 
 def build_result_anchor_styles() -> str:
-    """Build CSS for the invisible result scroll target."""
+    """보이지 않는 결과 스크롤 대상에 사용할 CSS를 만듭니다."""
     return """
         #meeting-minutes-result {
             scroll-margin-top: 32px;
@@ -302,13 +302,13 @@ def build_result_anchor_styles() -> str:
 
 
 def render_streamlit_korean_labels() -> None:
-    """Replace Streamlit uploader default English labels with Korean labels."""
+    """Streamlit 업로더의 기본 영어 라벨을 한국어 라벨로 바꿉니다."""
     # 파일 업로더의 일부 문구는 Streamlit 옵션으로 바꿀 수 없어 DOM 텍스트만 치환합니다.
     components.html(build_uploader_localization_script(), height=0)
 
 
 def build_uploader_localization_script() -> str:
-    """Build JavaScript that localizes Streamlit uploader labels to Korean."""
+    """Streamlit 업로더 라벨을 한국어로 바꾸는 JavaScript를 만듭니다."""
     return """
         <script>
         const replacements = new Map([
@@ -347,12 +347,12 @@ def build_uploader_localization_script() -> str:
 
 
 def scroll_to_result_section() -> None:
-    """Scroll the browser viewport to the meeting minutes result section."""
+    """브라우저 화면을 회의록 결과 섹션으로 스크롤합니다."""
     components.html(build_scroll_to_result_script(), height=0)
 
 
 def build_scroll_to_result_script() -> str:
-    """Build JavaScript that scrolls the parent browser to the result section."""
+    """부모 브라우저를 결과 섹션으로 스크롤하는 JavaScript를 만듭니다."""
     return """
         <script>
         const target = window.parent.document.getElementById("meeting-minutes-result");
@@ -364,7 +364,7 @@ def build_scroll_to_result_script() -> str:
 
 
 def initialize_session_state() -> None:
-    """Initialize Streamlit session state values used by the app."""
+    """앱에서 사용하는 Streamlit session state 값을 초기화합니다."""
     # 결과/히스토리는 서버 저장 없이 현재 브라우저 세션 안에서만 유지합니다.
     st.session_state.setdefault("history", [])
     st.session_state.setdefault("meeting_minutes", "")
@@ -375,12 +375,12 @@ def initialize_session_state() -> None:
 
 
 def get_supported_upload_types() -> list[str]:
-    """Return supported audio extensions in Streamlit uploader format."""
+    """Streamlit 업로더에 넘길 지원 오디오 확장자 목록을 반환합니다."""
     return sorted(extension.lstrip(".") for extension in SUPPORTED_AUDIO_EXTENSIONS)
 
 
 def save_uploaded_audio(uploaded_file: Any, temp_dir: Path) -> Path:
-    """Save a Streamlit uploaded file to a temporary audio file path."""
+    """Streamlit 업로드 파일을 임시 오디오 파일 경로에 저장합니다."""
     # 브라우저가 보낸 파일명에서 경로 요소를 제거해 임시 디렉터리 밖으로 나가지 않게 합니다.
     safe_filename = Path(uploaded_file.name).name
     if not safe_filename:
@@ -393,7 +393,7 @@ def save_uploaded_audio(uploaded_file: Any, temp_dir: Path) -> Path:
 
 
 def cleanup_upload_temp_files(temp_audio_path: Path | None, temp_dir: Path | None) -> None:
-    """Delete the uploaded temporary audio file and its temporary directory."""
+    """업로드된 임시 오디오 파일과 임시 디렉터리를 삭제합니다."""
     # STT 내부에서 생성한 청크는 transcribe.py가 정리하고, 여기서는 업로드 원본만 정리합니다.
     if temp_audio_path is not None:
         cleanup_temp_files([temp_audio_path])
@@ -407,7 +407,7 @@ def cleanup_upload_temp_files(temp_audio_path: Path | None, temp_dir: Path | Non
 
 
 def build_transcript_context(transcript: str, attendees: str) -> str:
-    """Add optional attendee context before summarization."""
+    """요약 전에 사용할 참석자와 회의 메모 컨텍스트를 만듭니다."""
     # 참석자 정보는 모델이 액션 아이템 담당자를 추론할 때 참고하는 보조 맥락입니다.
     cleaned_attendees = attendees.strip()
     if not cleaned_attendees:
@@ -423,14 +423,14 @@ Transcript:
 
 
 def build_download_filename(uploaded_filename: str) -> str:
-    """Build a meeting minutes download filename from the uploaded audio name."""
+    """업로드된 오디오 이름으로 회의록 다운로드 파일명을 만듭니다."""
     # 현재 정책은 원본명과 무관하게 날짜 기반 파일명으로 저장합니다.
     _ = uploaded_filename
     return f"회의록_{get_compact_date_label()}.txt"
 
 
 def build_meeting_title(uploaded_filename: str) -> str:
-    """Build a dated meeting minutes title from the uploaded audio name."""
+    """업로드된 오디오 이름으로 날짜가 포함된 회의록 제목을 만듭니다."""
     audio_stem = Path(uploaded_filename).stem.strip()
     today = get_korean_date_label()
     if audio_stem:
@@ -439,18 +439,18 @@ def build_meeting_title(uploaded_filename: str) -> str:
 
 
 def get_korean_date_label() -> str:
-    """Return today's date in Korean display format."""
+    """오늘 날짜를 한국어 표시 형식으로 반환합니다."""
     now = datetime.now()
     return f"{now.year}년 {now.month}월 {now.day}일"
 
 
 def get_compact_date_label() -> str:
-    """Return today's date in compact filename format."""
+    """오늘 날짜를 파일명에 쓰기 좋은 짧은 형식으로 반환합니다."""
     return datetime.now().strftime("%Y%m%d")
 
 
 def get_korean_time_label() -> str:
-    """Return current time in Korean 12-hour display format."""
+    """현재 시간을 한국어 12시간 표시 형식으로 반환합니다."""
     now = datetime.now()
     meridiem = "오전" if now.hour < 12 else "오후"
     hour = now.hour % 12 or 12
@@ -458,13 +458,13 @@ def get_korean_time_label() -> str:
 
 
 def prepend_meeting_title(meeting_minutes: str, uploaded_filename: str) -> str:
-    """Add a dated title to the top of generated meeting minutes."""
+    """생성된 회의록 맨 위에 날짜가 포함된 제목을 추가합니다."""
     title = build_meeting_title(uploaded_filename)
     return f"{title}\n\n{meeting_minutes.strip()}"
 
 
 def format_duration(seconds: float) -> str:
-    """Format elapsed seconds for display."""
+    """소요 시간을 화면 표시용 문자열로 변환합니다."""
     if seconds < 60:
         return f"{seconds:.1f}초"
 
@@ -474,7 +474,7 @@ def format_duration(seconds: float) -> str:
 
 
 def render_inputs() -> tuple[Any, str, str, bool, bool]:
-    """Render upload and option inputs for the meeting summarizer."""
+    """회의록 생성에 필요한 업로드와 옵션 입력 UI를 렌더링합니다."""
     # 입력 영역은 실제 처리와 테스트 처리 모두에서 공유합니다.
     uploaded_file, team_context = render_upload_section()
     attendees = render_meeting_info_section()
@@ -483,7 +483,7 @@ def render_inputs() -> tuple[Any, str, str, bool, bool]:
 
 
 def render_upload_section() -> tuple[Any, str]:
-    """Render context/audio upload controls and return uploaded inputs."""
+    """컨텍스트와 오디오 업로드 UI를 렌더링하고 업로드 입력을 반환합니다."""
     with st.container(border=True):
         st.subheader("파일 업로드")
         context_file = st.file_uploader(
@@ -508,7 +508,7 @@ def render_upload_section() -> tuple[Any, str]:
 
 
 def read_uploaded_text_file(uploaded_file: Any) -> str:
-    """Read an optional uploaded text file as UTF-8 context."""
+    """선택 업로드된 텍스트 파일을 UTF-8 컨텍스트로 읽습니다."""
     if uploaded_file is None:
         return ""
 
@@ -520,7 +520,7 @@ def read_uploaded_text_file(uploaded_file: Any) -> str:
 
 
 def render_meeting_info_section() -> str:
-    """Render optional meeting metadata inputs."""
+    """선택 회의 메타데이터 입력 UI를 렌더링합니다."""
     with st.container(border=True):
         st.subheader("회의 정보")
         attendees = st.text_area(
@@ -533,7 +533,7 @@ def render_meeting_info_section() -> str:
 
 
 def render_process_buttons(has_uploaded_file: bool) -> tuple[bool, bool]:
-    """Render real and mock process buttons in a balanced row."""
+    """실제 처리 버튼과 목업 처리 버튼을 균형 잡힌 행으로 렌더링합니다."""
     process_column, test_column = st.columns(2)
     with process_column:
         process_requested = st.button(
@@ -552,7 +552,7 @@ def render_process_buttons(has_uploaded_file: bool) -> tuple[bool, bool]:
 
 
 def process_meeting_audio(uploaded_file: Any, attendees: str, team_context: str) -> ProcessResult:
-    """Run STT and summarization for an uploaded audio file."""
+    """업로드된 오디오 파일에 대해 STT와 요약을 실행합니다."""
     temp_dir: Path | None = None
     temp_audio_path: Path | None = None
 
@@ -579,7 +579,7 @@ def process_meeting_audio(uploaded_file: Any, attendees: str, team_context: str)
 
 
 def run_stt_step(temp_audio_path: Path, progress: Any, status: Any) -> tuple[str, float]:
-    """Transcribe the uploaded audio and return the transcript with elapsed time."""
+    """업로드된 오디오를 전사하고 전사문과 소요 시간을 반환합니다."""
     progress.progress(15, text="음성을 텍스트로 변환하는 중...")
 
     # STT 시간은 요약 시간과 별도로 보여줘 병목을 바로 확인할 수 있게 합니다.
@@ -591,7 +591,7 @@ def run_stt_step(temp_audio_path: Path, progress: Any, status: Any) -> tuple[str
 
 
 def run_summary_step(transcript: str, attendees: str, team_context: str, progress: Any) -> tuple[str, float]:
-    """Summarize the transcript and return meeting minutes with elapsed time."""
+    """전사문을 요약하고 회의록과 소요 시간을 반환합니다."""
     progress.progress(70, text="회의록을 작성하는 중...")
     transcript_context = build_transcript_context(transcript, attendees)
 
@@ -602,7 +602,7 @@ def run_summary_step(transcript: str, attendees: str, team_context: str, progres
 
 
 def complete_progress(progress: Any, status: Any, summary_elapsed: float, total_elapsed: float) -> None:
-    """Mark the progress UI as complete and show final timing messages."""
+    """진행 UI를 완료 상태로 표시하고 최종 소요 시간을 보여줍니다."""
     progress.progress(100, text="완료")
     # 요약 시간은 이 함수 호출 전에도 기록하지만, 완료 상태 근처에도 한 번 더 명시합니다.
     status.write(f"회의록 작성 완료: {format_duration(summary_elapsed)}")
@@ -611,7 +611,7 @@ def complete_progress(progress: Any, status: Any, summary_elapsed: float, total_
 
 
 def process_mock_meeting_audio(attendees: str) -> ProcessResult:
-    """Return dummy meeting minutes without calling external APIs."""
+    """외부 API 호출 없이 더미 회의록을 반환합니다."""
     # UI 검수용 경로이므로 OpenAI API와 오디오 파일 처리를 호출하지 않습니다.
     timings = render_mock_progress()
     meeting_minutes = build_mock_meeting_minutes(attendees)
@@ -621,7 +621,7 @@ def process_mock_meeting_audio(attendees: str) -> ProcessResult:
 
 
 def render_mock_progress() -> ProcessTimings:
-    """Render progress UI for dummy processing and return fake timings."""
+    """더미 처리용 진행 UI를 렌더링하고 가짜 소요 시간을 반환합니다."""
     progress = st.progress(0, text="테스트 데이터를 준비하는 중")
     with st.status("테스트 회의록 생성 중", expanded=True) as status:
         status.write("더미 오디오 파일 검증 완료")
@@ -643,7 +643,7 @@ def render_mock_progress() -> ProcessTimings:
 
 
 def build_mock_meeting_minutes(attendees: str) -> str:
-    """Build a realistic dummy meeting minutes body for UI testing."""
+    """UI 테스트용으로 현실감 있는 더미 회의록 본문을 만듭니다."""
     cleaned_attendees = attendees.strip() or "김민수, 이서연, 박지훈"
 
     return f"""
@@ -677,7 +677,7 @@ def build_mock_meeting_minutes(attendees: str) -> str:
 
 
 def store_result(uploaded_filename: str, result: ProcessResult) -> None:
-    """Store a generated result in session state and history."""
+    """생성 결과를 session state와 히스토리에 저장합니다."""
     # 편집 영역의 초기값도 새 결과로 맞춰 다운로드가 수정본 기준으로 동작하게 합니다.
     st.session_state["meeting_minutes"] = result.meeting_minutes
     st.session_state["edited_minutes"] = result.meeting_minutes
@@ -688,7 +688,7 @@ def store_result(uploaded_filename: str, result: ProcessResult) -> None:
 
 
 def add_history_entry(uploaded_filename: str, result: ProcessResult) -> None:
-    """Append a generated meeting minutes result to session history."""
+    """생성된 회의록 결과를 session 히스토리에 추가합니다."""
     # 최신 변환 결과가 사이드바 상단에 오도록 앞쪽에 추가합니다.
     history_entry = {
         "uploaded_filename": uploaded_filename,
@@ -703,7 +703,7 @@ def add_history_entry(uploaded_filename: str, result: ProcessResult) -> None:
 
 
 def load_history_entry(index: int) -> None:
-    """Load a session history item into the current preview."""
+    """session 히스토리 항목을 현재 미리보기로 불러옵니다."""
     # 히스토리를 열면 편집 중이던 내용도 해당 회의록으로 교체합니다.
     history_entry = st.session_state["history"][index]
     st.session_state["meeting_minutes"] = history_entry["meeting_minutes"]
@@ -714,7 +714,7 @@ def load_history_entry(index: int) -> None:
 
 
 def render_history_sidebar() -> None:
-    """Render generated meeting minutes history in the sidebar."""
+    """생성된 회의록 히스토리를 사이드바에 렌더링합니다."""
     render_sidebar_logo()
     st.sidebar.header("세션 히스토리")
     st.sidebar.caption("이번 세션에서 변환한 회의록")
@@ -732,13 +732,13 @@ def render_history_sidebar() -> None:
 
 
 def render_sidebar_logo() -> None:
-    """Render the company logo at the top of the sidebar when available."""
+    """회사 로고가 있으면 사이드바 상단에 렌더링합니다."""
     if LOGO_PATH.exists():
         st.sidebar.image(str(LOGO_PATH), width=180)
 
 
 def render_timing_summary() -> None:
-    """Render processing time metrics for the current result."""
+    """현재 결과의 처리 시간 지표를 렌더링합니다."""
     timings = st.session_state.get("timings") or {}
     if not timings:
         return
@@ -755,13 +755,13 @@ def render_timing_summary() -> None:
 
 
 def render_result_actions(edited_minutes: str, download_filename: str) -> None:
-    """Render result action buttons in a horizontal layout."""
+    """결과 작업 버튼을 가로 레이아웃으로 렌더링합니다."""
     # 복사와 저장 버튼은 같은 HTML/CSS 안에서 렌더링해 높이와 간격을 맞춥니다.
     components.html(build_result_actions_html(edited_minutes, download_filename), height=52)
 
 
 def build_result_actions_html(edited_minutes: str, download_filename: str) -> str:
-    """Build HTML for copy and save action buttons."""
+    """복사와 저장 작업 버튼 HTML을 만듭니다."""
     return f"""
     <style>{build_result_actions_styles()}</style>
     {build_result_actions_markup()}
@@ -770,7 +770,7 @@ def build_result_actions_html(edited_minutes: str, download_filename: str) -> st
 
 
 def build_result_actions_styles() -> str:
-    """Build CSS for copy and save action buttons."""
+    """복사와 저장 작업 버튼 CSS를 만듭니다."""
     return f"""
     .action-row {{
       display: grid;
@@ -814,7 +814,7 @@ def build_result_actions_styles() -> str:
 
 
 def build_result_actions_markup() -> str:
-    """Build HTML markup for result action buttons."""
+    """결과 작업 버튼 HTML markup을 만듭니다."""
     return """
     <div class="action-row">
       <button id="copy-minutes" class="meeting-action copy-action">회의록 복사</button>
@@ -824,7 +824,7 @@ def build_result_actions_markup() -> str:
 
 
 def build_result_actions_script(edited_minutes: str, download_filename: str) -> str:
-    """Build JavaScript for clipboard copy and text-file download actions."""
+    """클립보드 복사와 텍스트 파일 다운로드용 JavaScript를 만듭니다."""
     return f"""
     <script>
     const text = {json.dumps(edited_minutes)};
@@ -859,7 +859,7 @@ def build_result_actions_script(edited_minutes: str, download_filename: str) -> 
 
 
 def get_korean_error_message(error: Exception) -> str:
-    """Return a Korean user-facing error message for known failure cases."""
+    """알려진 실패 상황에 대해 한국어 사용자 오류 메시지를 반환합니다."""
     error_text = str(error)
 
     if "OPENAI_API_KEY" in error_text:
@@ -877,7 +877,7 @@ def get_korean_error_message(error: Exception) -> str:
 
 
 def split_top_result_sections(minutes_text: str) -> dict[str, str]:
-    """Split generated minutes into top-level app display sections."""
+    """생성된 회의록을 앱 표시용 상위 섹션으로 나눕니다."""
     sections: dict[str, list[str]] = {}
     current_section: str | None = None
 
@@ -895,12 +895,12 @@ def split_top_result_sections(minutes_text: str) -> dict[str, str]:
 
 
 def should_start_top_result_section(current_section: str | None, section_title: str | None) -> bool:
-    """Return whether a Markdown heading starts one of the app's top preview sections."""
+    """Markdown 제목이 앱의 상위 미리보기 섹션인지 반환합니다."""
     return current_section != "전체 회의록" and section_title in TOP_RESULT_SECTIONS
 
 
 def parse_markdown_heading_title(line: str) -> str | None:
-    """Return a normalized Markdown heading title without leading emoji markers."""
+    """앞쪽 이모지 표시를 제거한 정규화된 Markdown 제목을 반환합니다."""
     match = re.match(r"^\s*#{1,6}\s+(?P<title>.+?)\s*$", line)
     if not match:
         return None
@@ -911,7 +911,7 @@ def parse_markdown_heading_title(line: str) -> str | None:
 
 
 def extract_markdown_section(markdown_text: str, title: str) -> str:
-    """Extract one Markdown section body by heading title."""
+    """제목으로 Markdown 섹션 본문 하나를 추출합니다."""
     lines: list[str] = []
     collecting = False
 
@@ -930,7 +930,7 @@ def extract_markdown_section(markdown_text: str, title: str) -> str:
 
 
 def build_result_display_sections(minutes_text: str) -> ResultSections:
-    """Build all sections needed for the result preview UI."""
+    """결과 미리보기 UI에 필요한 모든 섹션을 만듭니다."""
     top_sections = split_top_result_sections(minutes_text)
     full_minutes = top_sections.get("전체 회의록") or minutes_text
 
@@ -945,7 +945,7 @@ def build_result_display_sections(minutes_text: str) -> ResultSections:
 
 
 def render_markdown_section(title: str, content: str, empty_text: str = "내용 없음") -> None:
-    """Render a titled Markdown preview section."""
+    """제목이 있는 Markdown 미리보기 섹션을 렌더링합니다."""
     st.markdown(f"#### {title}")
     if content.strip():
         st.markdown(content.strip())
@@ -954,7 +954,7 @@ def render_markdown_section(title: str, content: str, empty_text: str = "내용 
 
 
 def render_result_preview_sections(sections: ResultSections) -> None:
-    """Render always-visible and expandable meeting minutes sections."""
+    """항상 보이는 회의록 섹션과 펼칠 수 있는 섹션을 렌더링합니다."""
     render_markdown_section("📋 빠른 요약", sections.quick_summary, "요약 없음")
     render_action_items_preview(sections.action_items)
 
@@ -969,7 +969,7 @@ def render_result_preview_sections(sections: ResultSections) -> None:
 
 
 def render_action_items_preview(action_items_text: str) -> None:
-    """Render action items with row-level missing-owner/deadline labels."""
+    """담당자나 기한 누락 표시를 포함한 액션 아이템 섹션을 렌더링합니다."""
     st.markdown("#### ✅ 액션 아이템")
     if not action_items_text.strip():
         st.caption("액션 아이템 없음")
@@ -980,7 +980,7 @@ def render_action_items_preview(action_items_text: str) -> None:
 
 
 def render_action_item_line(line: str) -> str:
-    """Render one action item line, highlighting only missing fields in gray."""
+    """액션 아이템 한 줄을 렌더링하고 누락 필드만 회색으로 강조합니다."""
     parsed_item = parse_action_item_line(line)
     if parsed_item is None:
         return f"<li>{escape_html(line.lstrip('- ').strip())}</li>"
@@ -997,7 +997,7 @@ def render_action_item_line(line: str) -> str:
 
 
 def parse_action_item_line(line: str) -> dict[str, str] | None:
-    """Parse the structured action item line produced by summarize.py."""
+    """summarize.py가 만든 구조화 액션 아이템 줄을 파싱합니다."""
     normalized_line = line.lstrip("- ").replace("⚠️", "").strip()
     match = re.match(
         r"담당자:\s*(?P<owner>.*?)\s*/\s*기한:\s*(?P<due_date>.*?)\s*/\s*할 일:\s*(?P<task>.*)$",
@@ -1009,17 +1009,17 @@ def parse_action_item_line(line: str) -> dict[str, str] | None:
 
 
 def is_missing_field(value: str) -> bool:
-    """Return whether an action-item field should be displayed as missing."""
+    """액션 아이템 필드를 누락 값으로 표시해야 하는지 반환합니다."""
     return value.strip() in {"", "미정", "None", "null"}
 
 
 def build_missing_field_label(label: str) -> str:
-    """Build a muted inline label for missing action-item fields."""
+    """누락된 액션 아이템 필드용 흐린 inline 라벨을 만듭니다."""
     return f'<span style="color:#8A8A96; font-weight:600;">{label}</span>'
 
 
 def escape_html(value: str) -> str:
-    """Escape text before rendering small HTML snippets in Streamlit."""
+    """Streamlit의 작은 HTML 조각에 넣기 전에 텍스트를 escape합니다."""
     return (
         value.replace("&", "&amp;")
         .replace("<", "&lt;")
@@ -1030,7 +1030,7 @@ def escape_html(value: str) -> str:
 
 
 def render_result() -> None:
-    """Render meeting minutes preview and download controls."""
+    """회의록 미리보기와 다운로드 컨트롤을 렌더링합니다."""
     meeting_minutes = st.session_state.get("meeting_minutes")
     download_filename = st.session_state.get("download_filename", "회의록.txt")
 
@@ -1052,7 +1052,7 @@ def render_result() -> None:
 
 
 def main() -> None:
-    """Render the Streamlit app and handle user actions."""
+    """Streamlit 앱을 렌더링하고 사용자 동작을 처리합니다."""
     configure_page()
     initialize_session_state()
     uploaded_file, attendees, team_context, process_requested, mock_requested = render_inputs()

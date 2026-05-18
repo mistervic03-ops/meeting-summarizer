@@ -1,26 +1,21 @@
-import { useMemo, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import {
-  AlertTriangle,
-  CalendarDays,
-  CheckCircle2,
-  Clipboard,
-  Copy,
-  Download,
-  FileText,
-  MessageSquareText,
-  UserRound
-} from "lucide-react";
-import { ActionItem, Decision, JobResult } from "../api/types";
-
-type ResultTab = "summary" | "actions" | "minutes";
+import { useEffect, useMemo, useState } from "react";
+import { CalendarDays, Check, ChevronDown, Copy, Download, Edit3 } from "lucide-react";
+import ActionsTab from "../components/ActionsTab";
+import MinutesTab from "../components/MinutesTab";
+import SummaryTab from "../components/SummaryTab";
+import ThemeToggle from "../components/ThemeToggle";
+import { JobResult, MeetingType } from "../api/types";
+import { ExportFormat, exportMeetingDocument, sanitizeExportFilename } from "../utils/exportDocument";
+import { normalizeDisplayText, normalizeMarkdownForDisplay } from "../utils/displayText";
+import { getMeetingTypeLabel } from "../utils/meetingTypes";
+import { getDefaultResultTab, getDisplayWarnings, getMeetingFocusLabel, getResultTabs, ResultTab, resolveMeetingType, splitDiscussionNotes, usesQuietActionTone } from "../utils/resultView";
 
 interface ResultPageProps {
   filename?: string;
   meetingDate?: string;
+  meetingType?: MeetingType;
   result?: JobResult;
   onCopy?: (minutes: string) => void;
-  onDownload?: () => void;
 }
 
 const EMPTY_RESULT: JobResult = {
@@ -34,10 +29,11 @@ const EMPTY_RESULT: JobResult = {
   warnings: []
 };
 
-const TABS: Array<{ id: ResultTab; label: string }> = [
-  { id: "summary", label: "요약" },
-  { id: "actions", label: "액션 아이템" },
-  { id: "minutes", label: "전체 회의록" }
+const EXPORT_OPTIONS: Array<{ format: ExportFormat; label: string }> = [
+  { format: "markdown", label: "Markdown (.md)" },
+  { format: "text", label: "Plain text (.txt)" },
+  { format: "pdf", label: "PDF" },
+  { format: "docx", label: "Word (.docx)" }
 ];
 
 /**
@@ -57,320 +53,196 @@ async function copyToClipboard(text: string): Promise<void> {
 }
 
 /**
- * Renders a small placeholder when a result section has no items.
- */
-function EmptySection({ message }: { message: string }) {
-  return (
-    <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm font-medium text-slate-500">
-      {message}
-    </div>
-  );
-}
-
-/**
- * Renders a section heading with an optional item count.
- */
-function SectionHeading({ count, title }: { count?: number; title: string }) {
-  return (
-    <div className="mb-4 flex items-center justify-between gap-3">
-      <h2 className="text-lg font-bold text-slate-950">{title}</h2>
-      {typeof count === "number" ? (
-        <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-bold text-brand-600">{count}</span>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * Renders the decision status badge in the summary tab.
- */
-function DecisionBadge({ status }: { status: Decision["status"] }) {
-  const className =
-    status === "확정" ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700";
-
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${className}`}>{status}</span>;
-}
-
-/**
- * Renders the summary tab with facts, decisions, speakers, and warnings.
- */
-function SummaryTab({ result }: { result: JobResult }) {
-  const summaryFacts = result.summary_facts ?? [];
-  const decisions = result.decisions ?? [];
-  const speakerHighlights = result.speaker_highlights ?? [];
-  const warnings = result.warnings ?? [];
-
-  return (
-    <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-        <SectionHeading count={summaryFacts.length} title="빠른 요약" />
-        {summaryFacts.length ? (
-          <div className="grid gap-3">
-            {summaryFacts.map((fact) => (
-              <article key={fact} className="rounded-lg border border-brand-100 bg-brand-50/60 p-4">
-                <p className="text-sm leading-6 text-slate-800">{fact}</p>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <EmptySection message="빠른 요약이 없습니다." />
-        )}
-      </section>
-
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-        <SectionHeading count={decisions.length} title="주요 결정사항" />
-        {decisions.length ? (
-          <div className="space-y-3">
-            {decisions.map((decision) => (
-              <article key={`${decision.status}-${decision.decision}`} className="rounded-lg border border-slate-200 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <p className="text-sm font-semibold leading-6 text-slate-900">{decision.decision}</p>
-                  <DecisionBadge status={decision.status} />
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <EmptySection message="주요 결정사항이 없습니다." />
-        )}
-      </section>
-
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6 xl:col-span-2">
-        <SectionHeading count={speakerHighlights.length} title="주요 발언 요약" />
-        {speakerHighlights.length ? (
-          <div className="grid gap-3 md:grid-cols-2">
-            {speakerHighlights.map((highlight) => (
-              <article key={highlight} className="flex gap-3 rounded-lg border border-slate-200 p-4">
-                <MessageSquareText className="mt-0.5 shrink-0 text-brand-500" size={19} />
-                <p className="text-sm leading-6 text-slate-700">{highlight}</p>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <EmptySection message="주요 발언 요약이 없습니다." />
-        )}
-      </section>
-
-      {warnings.length ? (
-        <section className="rounded-lg border border-amber-200 bg-amber-50 p-5 sm:p-6 xl:col-span-2">
-          <SectionHeading count={warnings.length} title="확인 필요" />
-          <div className="space-y-3">
-            {warnings.map((warning) => (
-              <div key={warning} className="flex gap-3 rounded-lg bg-white/70 p-4 text-sm leading-6 text-amber-900">
-                <AlertTriangle className="mt-0.5 shrink-0 text-amber-600" size={18} />
-                <p>{warning}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * Renders one action item card with owner, due date, and confidence state.
- */
-function ActionItemCard({ item }: { item: ActionItem }) {
-  const owner = item.owner?.trim() || "담당자 미지정";
-  const dueDate = item.due_date?.trim() || "기한 미정";
-  const hasOwner = Boolean(item.owner?.trim());
-  const hasDueDate = Boolean(item.due_date?.trim());
-
-  return (
-    <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex gap-3">
-          <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-brand-100 text-brand-600">
-            <CheckCircle2 size={20} />
-          </div>
-          <div>
-            <h2 className="text-base font-bold leading-6 text-slate-950">{item.task}</h2>
-            {item.confidence === "low" ? (
-              <p className="mt-2 text-xs font-semibold text-slate-400">낮은 신뢰도</p>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="grid gap-2 sm:min-w-48">
-          <span
-            className={[
-              "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold",
-              hasOwner ? "bg-brand-50 text-brand-700" : "bg-slate-100 text-slate-400"
-            ].join(" ")}
-          >
-            <UserRound size={16} />
-            {owner}
-          </span>
-          <span
-            className={[
-              "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold",
-              hasDueDate ? "bg-slate-100 text-slate-700" : "bg-slate-100 text-slate-400"
-            ].join(" ")}
-          >
-            <CalendarDays size={16} />
-            {dueDate}
-          </span>
-        </div>
-      </div>
-    </article>
-  );
-}
-
-/**
- * Renders the action item tab.
- */
-function ActionsTab({ items }: { items: ActionItem[] }) {
-  if (!items.length) {
-    return (
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-        <EmptySection message="액션 아이템이 없습니다." />
-      </section>
-    );
-  }
-
-  return (
-    <section className="space-y-4">
-      {items.map((item, index) => (
-        <ActionItemCard key={`${item.task}-${index}`} item={item} />
-      ))}
-    </section>
-  );
-}
-
-/**
- * Renders the full minutes tab with markdown formatting.
- */
-function MinutesTab({ minutes }: { minutes: string }) {
-  if (!minutes.trim()) {
-    return (
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-        <EmptySection message="전체 회의록이 없습니다." />
-      </section>
-    );
-  }
-
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
-      <ReactMarkdown
-        components={{
-          h1: ({ children }) => <h1 className="mb-4 text-2xl font-bold text-slate-950">{children}</h1>,
-          h2: ({ children }) => <h2 className="mb-3 mt-6 text-xl font-bold text-slate-950">{children}</h2>,
-          h3: ({ children }) => <h3 className="mb-2 mt-5 text-lg font-bold text-slate-900">{children}</h3>,
-          li: ({ children }) => <li className="ml-5 list-disc leading-7 text-slate-700">{children}</li>,
-          p: ({ children }) => <p className="mb-4 leading-7 text-slate-700">{children}</p>,
-          strong: ({ children }) => <strong className="font-bold text-slate-950">{children}</strong>
-        }}
-      >
-        {minutes}
-      </ReactMarkdown>
-    </section>
-  );
-}
-
-/**
  * Renders the professional meeting result page with summary, action, and full-minutes tabs.
  */
 export default function ResultPage({
   filename,
   meetingDate,
+  meetingType,
   result = EMPTY_RESULT,
-  onCopy,
-  onDownload
+  onCopy
 }: ResultPageProps) {
-  const [activeTab, setActiveTab] = useState<ResultTab>("summary");
-  const title = filename || result.filename || "회의록";
+  const [activeTab, setActiveTab] = useState<ResultTab>("actions");
+  const title = normalizeDisplayText(filename || result.filename || "회의록");
+  const displayMinutes = normalizeMarkdownForDisplay(result.minutes);
+  const [editedMinutes, setEditedMinutes] = useState(displayMinutes);
+  const [isEditing, setIsEditing] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"copied" | "idle">("idle");
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  const finalizedMinutes = normalizeMarkdownForDisplay(editedMinutes);
+  const exportFilename = sanitizeExportFilename(title);
   const dateLabel = meetingDate || getDefaultMeetingDate();
+  const resolvedMeetingType = resolveMeetingType(result.meeting_type ?? meetingType);
+  const meetingTypeLabel = getMeetingTypeLabel(resolvedMeetingType);
+  const meetingFocusLabel = getMeetingFocusLabel(resolvedMeetingType);
   const actionItems = result.action_items ?? [];
-  const factsCount = result.summary_facts?.length ?? 0;
+  const { discussionNotes, summaryFacts } = splitDiscussionNotes(result.summary_facts ?? []);
+  const displayWarnings = getDisplayWarnings(result.warnings ?? [], resolvedMeetingType);
+  const tabs = useMemo(() => getResultTabs(resolvedMeetingType), [resolvedMeetingType]);
+  const factsCount = summaryFacts.length;
   const decisionsCount = result.decisions?.length ?? 0;
+  const warningsCount = displayWarnings.length;
 
   const tabPanel = useMemo(() => {
     if (activeTab === "actions") {
-      return <ActionsTab items={actionItems} />;
+      return <ActionsTab isQuiet={usesQuietActionTone(resolvedMeetingType)} items={actionItems} />;
     }
 
     if (activeTab === "minutes") {
-      return <MinutesTab minutes={result.minutes} />;
+      return <MinutesTab isEditing={isEditing} minutes={editedMinutes} onChange={setEditedMinutes} />;
     }
 
-    return <SummaryTab result={result} />;
-  }, [activeTab, actionItems, result]);
+    return <SummaryTab discussionNotes={discussionNotes} displayWarnings={displayWarnings} meetingType={resolvedMeetingType} result={result} summaryFacts={summaryFacts} />;
+  }, [activeTab, actionItems, discussionNotes, displayWarnings, editedMinutes, isEditing, resolvedMeetingType, result, summaryFacts]);
+
+  useEffect(() => {
+    setEditedMinutes(displayMinutes);
+    setIsEditing(false);
+    setCopyStatus("idle");
+    setActiveTab(getDefaultResultTab(resolvedMeetingType));
+  }, [displayMinutes, result.job_id, resolvedMeetingType]);
+
+  useEffect(() => {
+    if (copyStatus !== "copied") {
+      return undefined;
+    }
+
+    const timerId = window.setTimeout(() => setCopyStatus("idle"), 1600);
+    return () => window.clearTimeout(timerId);
+  }, [copyStatus]);
+
+  /**
+   * 읽기 화면과 일반 텍스트 편집 화면을 전환합니다.
+   */
+  function handleEditToggle() {
+    setActiveTab("minutes");
+    setIsEditing((current) => !current);
+  }
 
   /**
    * Copies the full minutes text and allows callers to hook into the action.
    */
   async function handleCopy() {
-    await copyToClipboard(result.minutes);
-    onCopy?.(result.minutes);
+    await copyToClipboard(finalizedMinutes);
+    setCopyStatus("copied");
+    onCopy?.(finalizedMinutes);
+  }
+
+  /**
+   * 브라우저에서 가볍게 처리할 수 있는 방식으로 회의록을 내보냅니다.
+   */
+  function handleExport(format: ExportFormat) {
+    exportMeetingDocument({
+      filename: exportFilename,
+      format,
+      markdown: finalizedMinutes,
+      title
+    });
+    setIsExportOpen(false);
   }
 
   return (
-    <main className="min-h-screen bg-[#F6F4F8] px-4 py-6 text-slate-950 sm:px-6 lg:px-8">
-      <div className="mx-auto w-full max-w-6xl">
-        <header className="rounded-lg border border-white/70 bg-white p-5 shadow-card sm:p-6">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+    <main className="min-h-screen bg-white px-4 py-6 text-slate-950 dark:bg-app-bg sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-5xl">
+        <header className="border-b border-slate-300 pb-5">
+          <div className="mb-1.5 flex items-center justify-between gap-3">
+            <p className="min-w-0 text-[10px] font-medium tracking-[0.04em] text-brand-700 dark:text-app-accent">BIGXDATA · 회의록</p>
+            <ThemeToggle compact />
+          </div>
+          <div className="flex flex-col gap-3.5 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
-              <div className="mb-3 flex items-center gap-3">
-                <div className="grid size-10 place-items-center rounded-lg bg-brand-500 text-white shadow-lg shadow-brand-500/25">
-                  <FileText size={20} />
-                </div>
-                <span className="text-sm font-bold text-brand-600">BigxData 회의록</span>
+              <h1 className="mt-1.5 break-words text-[30px] font-semibold leading-[1.12] tracking-normal text-slate-950">{title}</h1>
+              <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-slate-500">
+                <span className="inline-flex items-center gap-1.5">
+                  <CalendarDays className="shrink-0" size={12} />
+                  {dateLabel}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>유형 {meetingTypeLabel}</span>
+                <span aria-hidden="true">·</span>
+                <span>초점 {meetingFocusLabel}</span>
+                <span aria-hidden="true">·</span>
+                <span>액션 · {actionItems.length}</span>
+                <span aria-hidden="true">·</span>
+                <span>결정 · {decisionsCount}</span>
+                <span aria-hidden="true">·</span>
+                <span>요약 · {factsCount}</span>
+                {discussionNotes.length ? (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>메모 · {discussionNotes.length}</span>
+                  </>
+                ) : null}
+                {warningsCount ? (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span>검토 · {warningsCount}</span>
+                  </>
+                ) : null}
               </div>
-              <h1 className="truncate text-2xl font-bold tracking-normal text-slate-950 sm:text-3xl">{title}</h1>
-              <p className="mt-2 flex items-center gap-2 text-sm font-medium text-slate-500">
-                <CalendarDays size={16} />
-                {dateLabel}
-              </p>
             </div>
 
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="flex flex-col gap-1.5 sm:flex-row lg:pt-1">
               <button
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 transition hover:border-brand-200 hover:text-brand-600"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-80 dark:bg-app-surface"
+                disabled={!finalizedMinutes && !isEditing}
+                type="button"
+                onClick={handleEditToggle}
+              >
+                {isEditing ? <Check className="shrink-0" size={15} /> : <Edit3 className="shrink-0" size={15} />}
+                {isEditing ? "완료" : "편집"}
+              </button>
+              <button
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-80 dark:bg-app-surface"
+                disabled={!finalizedMinutes}
                 type="button"
                 onClick={handleCopy}
               >
-                <Copy size={17} />
-                복사
+                {copyStatus === "copied" ? <Check className="shrink-0" size={15} /> : <Copy className="shrink-0" size={15} />}
+                {copyStatus === "copied" ? "복사됨" : "복사"}
               </button>
-              <button
-                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 text-sm font-bold text-white shadow-lg shadow-brand-500/25 transition hover:bg-brand-600"
-                type="button"
-                onClick={onDownload}
-              >
-                <Download size={17} />
-                다운로드
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-6 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-lg bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold text-slate-500">빠른 요약</p>
-              <p className="mt-1 text-lg font-bold text-slate-950">{factsCount}</p>
-            </div>
-            <div className="rounded-lg bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold text-slate-500">결정사항</p>
-              <p className="mt-1 text-lg font-bold text-slate-950">{decisionsCount}</p>
-            </div>
-            <div className="rounded-lg bg-slate-50 px-4 py-3">
-              <p className="text-xs font-semibold text-slate-500">액션 아이템</p>
-              <p className="mt-1 text-lg font-bold text-slate-950">{actionItems.length}</p>
+              <div className="relative">
+                <button
+                  aria-expanded={isExportOpen}
+                  className="inline-flex h-9 w-full shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-brand-600 px-3 text-sm font-medium text-white transition-colors duration-150 ease-out hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:opacity-80 dark:bg-app-accent-button dark:text-[13px] dark:hover:bg-app-accent-button-hover dark:focus-visible:ring-app-accent-border sm:w-auto"
+                  disabled={!finalizedMinutes}
+                  type="button"
+                  onClick={() => setIsExportOpen((current) => !current)}
+                >
+                  <Download className="shrink-0" size={15} />
+                  내보내기
+                  <ChevronDown className={`shrink-0 transition-transform duration-150 ease-out ${isExportOpen ? "rotate-180" : ""}`} size={14} />
+                </button>
+                {isExportOpen ? (
+                  <div className="absolute right-0 z-30 mt-1.5 w-44 overflow-hidden rounded-md border border-slate-200 bg-white py-1 shadow-sm dark:border-app-border dark:bg-app-popover">
+                    {EXPORT_OPTIONS.map((option) => (
+                      <button
+                        key={option.format}
+                        className="block w-full px-3 py-2 text-left text-[12px] font-medium text-slate-600 transition-colors duration-150 ease-out hover:bg-slate-50 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
+                        type="button"
+                        onClick={() => handleExport(option.format)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             </div>
           </div>
         </header>
 
-        <nav className="mt-6 overflow-x-auto rounded-lg border border-slate-200 bg-white p-1 shadow-sm" aria-label="결과 탭">
-          <div className="grid min-w-max grid-cols-3 gap-1">
-            {TABS.map((tab) => {
+        <nav className="mt-4 overflow-x-auto border-b border-slate-300" aria-label="결과 탭">
+          <div className="flex min-w-max gap-5">
+            {tabs.map((tab) => {
               const isActive = activeTab === tab.id;
 
               return (
                 <button
                   key={tab.id}
                   className={[
-                    "h-11 rounded-lg px-5 text-sm font-bold transition",
-                    isActive ? "bg-brand-500 text-white shadow-lg shadow-brand-500/20" : "text-slate-500 hover:bg-brand-50 hover:text-brand-600"
+                    "h-9 whitespace-nowrap border-b-2 px-0.5 text-sm font-medium transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100",
+                    isActive ? "border-brand-600 text-slate-950" : "border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-800"
                   ].join(" ")}
                   type="button"
                   onClick={() => setActiveTab(tab.id)}
@@ -382,12 +254,9 @@ export default function ResultPage({
           </div>
         </nav>
 
-        <section className="mt-6 pb-10">{tabPanel}</section>
-
-        <div className="fixed bottom-5 right-5 hidden rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-500 shadow-lg lg:flex">
-          <Clipboard className="mr-2 text-brand-500" size={15} />
-          결과 검토 모드
-        </div>
+        <section className="-mx-3 mt-5 bg-[#FBFAFC] px-3 py-5 pb-9 dark:bg-app-surface sm:-mx-5 sm:px-5">
+          {tabPanel}
+        </section>
       </div>
     </main>
   );
