@@ -56,6 +56,36 @@ tools/whisper_eval/outputs/<audio>_<model>_<device>_<timestamp>.txt
 
 저장 위치를 바꾸려면 `--output-dir` 또는 `--output-file`을 사용합니다.
 
+## GPU Docker 실행
+
+이 Dockerfile은 평가 도구 전용입니다. 프로덕션 `docker-compose.yml`, backend,
+frontend runtime과 연결하지 않습니다.
+
+프로젝트 루트에서 이미지를 빌드합니다.
+
+```bash
+docker build -f tools/whisper_eval/Dockerfile.gpu -t whisper-eval-gpu .
+```
+
+CUDA/CTranslate2 preflight를 먼저 확인합니다.
+
+```bash
+docker run --rm --gpus all whisper-eval-gpu --help
+
+docker run --rm --gpus all --entrypoint python3 whisper-eval-gpu \
+  -c "import ctranslate2; print(ctranslate2.__version__); print(ctranslate2.get_cuda_device_count())"
+```
+
+오디오 파일을 전사합니다.
+
+```bash
+docker run --rm --gpus all \
+  -v "$PWD/test-audio.m4a:/audio/test-audio.m4a:ro" \
+  -v "$PWD/tools/whisper_eval/outputs:/outputs" \
+  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+  whisper-eval-gpu /audio/test-audio.m4a --output-dir /outputs
+```
+
 ## 권장 모델
 
 - `distil-large-v3`: 첫 GPU 품질/속도 평가 기본값입니다.
