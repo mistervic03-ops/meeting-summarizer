@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
-from tempfile import mkdtemp
+from tempfile import gettempdir, mkdtemp
 
 from pydub import AudioSegment
 
@@ -112,8 +112,8 @@ def split_audio_file(audio_file: Path, chunk_config: AudioChunkConfig | None = N
             )
             return [audio_file]
 
-        # 모든 청크는 /private/tmp 하위의 전용 임시 디렉터리에 생성합니다.
-        temp_dir = Path(mkdtemp(prefix=TEMP_CHUNK_DIR_PREFIX, dir="/private/tmp"))
+        # 모든 청크는 운영체제 기본 임시 디렉터리 하위의 전용 디렉터리에 생성합니다.
+        temp_dir = Path(mkdtemp(prefix=TEMP_CHUNK_DIR_PREFIX, dir=gettempdir()))
         chunk_files = export_audio_chunks(audio, audio_file, temp_dir, audio_format, chunk_config=chunk_config)
         logger.info(
             "audio_chunking completed source=%s chunk_count=%s duration_seconds=%.1f target_seconds=%s overlap_seconds=%s",

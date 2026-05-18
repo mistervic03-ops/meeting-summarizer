@@ -10,3 +10,4 @@ temp/
 frontend/node_modules/
 frontend/dist/
 frontend/tsconfig.tsbuildinfo
+*.m4a

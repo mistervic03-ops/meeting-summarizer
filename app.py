@@ -7,7 +7,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from tempfile import mkdtemp
+from tempfile import gettempdir, mkdtemp
 from typing import Any, NamedTuple
 
 import streamlit as st
@@ -35,7 +35,7 @@ COLOR_SURFACE_PURPLE = "#F4F3F8"
 COLOR_DISABLED = "#F2F2F4"
 COLOR_DISABLED_TEXT = "#8A8A96"
 
-# 업로드 파일은 처리 중에만 /private/tmp 아래에 저장하고, 처리 후 즉시 삭제합니다.
+# 업로드 파일은 처리 중에만 운영체제 기본 임시 디렉터리에 저장하고, 처리 후 즉시 삭제합니다.
 UPLOAD_TEMP_DIR_PREFIX = "meeting_summarizer_upload_"
 
 # API 호출 없이 UI 흐름을 확인하는 테스트 모드용 가상 파일명입니다.
@@ -559,7 +559,7 @@ def process_meeting_audio(uploaded_file: Any, attendees: str, team_context: str)
     try:
         # 전체 시간은 임시 파일 저장부터 요약 완료까지 사용자 체감 구간으로 측정합니다.
         total_started_at = time.perf_counter()
-        temp_dir = Path(mkdtemp(prefix=UPLOAD_TEMP_DIR_PREFIX, dir="/private/tmp"))
+        temp_dir = Path(mkdtemp(prefix=UPLOAD_TEMP_DIR_PREFIX, dir=gettempdir()))
         temp_audio_path = save_uploaded_audio(uploaded_file, temp_dir)
 
         progress = st.progress(0, text="오디오 파일 준비 중")
