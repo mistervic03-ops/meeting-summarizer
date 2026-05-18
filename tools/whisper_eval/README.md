@@ -73,7 +73,7 @@ CUDA/CTranslate2 preflight를 먼저 확인합니다.
 docker run --rm --gpus all whisper-eval-gpu --help
 
 docker run --rm --gpus all --entrypoint python3 whisper-eval-gpu \
-  -c "import ctranslate2; print(ctranslate2.__version__); print(ctranslate2.get_cuda_device_count())"
+  -c "import ctranslate2; print(ctranslate2.version); print(ctranslate2.get_cuda_device_count())"
 ```
 
 오디오 파일을 전사합니다.
@@ -106,6 +106,46 @@ docker run --rm --gpus all \
 - NVIDIA GPU와 CUDA runtime이 서버에서 동작해야 합니다.
 - `faster-whisper`와 그 하위 dependency인 CTranslate2가 CUDA 실행을 지원해야 합니다.
 - `device=cuda`, `compute_type=float16` 조합이 실패하면 CUDA/CTranslate2 wheel 호환성을 먼저 확인합니다.
+
+## 문제 해결
+
+이 평가 이미지는 CUDA 12.4 + cuDNN 9 runtime 위에서 CTranslate2 GPU wheel을 쓰도록
+`ctranslate2==4.5.0`을 먼저 설치한 뒤 `faster-whisper==1.1.1`을 설치합니다. `pip install
+faster-whisper`가 고르는 transitive CTranslate2 버전에 의존하지 않기 위한 pin입니다.
+
+`ctranslate2.get_cuda_device_count()`가 `0`이면 먼저 Docker GPU passthrough를 확인합니다.
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 nvidia-smi
+```
+
+위 명령은 GPU를 보는데 preflight만 `0`이면 CUDA runtime과 CTranslate2 wheel 조합 문제일
+가능성이 큽니다. 이미지를 다시 빌드하고 pin이 반영됐는지 확인합니다.
+
+```bash
+docker build --no-cache -f tools/whisper_eval/Dockerfile.gpu -t whisper-eval-gpu .
+
+docker run --rm --gpus all --entrypoint python3 whisper-eval-gpu \
+  -c "import ctranslate2; print(ctranslate2.version); print(ctranslate2.get_cuda_device_count())"
+```
+
+CUDA wheel mismatch가 계속되면 `tools/whisper_eval/Dockerfile.gpu`의
+`CTRANSLATE2_VERSION`만 바꿔 비교합니다. CUDA 12 + cuDNN 9 계열은 `4.5.x` 이상이
+대상이고, CUDA 12 + cuDNN 8 환경은 `4.4.0`으로 낮추는 우회가 알려져 있습니다.
+
+GPU 경로가 막혀도 스크립트 자체와 오디오 decode를 확인하려면 CPU sanity check를 실행합니다.
+
+```bash
+docker run --rm \
+  -v "$PWD/test-audio.m4a:/audio/test-audio.m4a:ro" \
+  -v "$PWD/tools/whisper_eval/outputs:/outputs" \
+  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+  whisper-eval-gpu /audio/test-audio.m4a \
+    --device cpu \
+    --compute-type int8 \
+    --model small \
+    --output-dir /outputs
+```
 
 ## Caveats
 
