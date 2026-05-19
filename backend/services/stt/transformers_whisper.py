@@ -215,13 +215,28 @@ def build_whisper_prompt_ids(transcriber: Any) -> Any | None:
         return None
 
     try:
-        prompt_ids = tokenizer.get_prompt_ids(prompt)
+        prompt_ids = normalize_prompt_ids_for_transformers(tokenizer.get_prompt_ids(prompt))
     except Exception as exc:
         logger.warning("local_gpu_whisper_prompt_ids_failed error=%s", exc)
         return None
 
     logger.info("local_gpu_whisper_prompt_enabled prompt_chars=%s", len(prompt))
     return prompt_ids
+
+
+def normalize_prompt_ids_for_transformers(prompt_ids: Any) -> Any:
+    """tokenizer prompt ids를 Transformers generation이 기대하는 torch long tensor로 정규화합니다."""
+    try:
+        import torch
+    except ImportError as exc:
+        raise RuntimeError("torch is required to normalize local_gpu_whisper prompt_ids.") from exc
+
+    tensor_type = getattr(torch, "Tensor", None)
+    if tensor_type is not None and isinstance(prompt_ids, tensor_type):
+        if hasattr(prompt_ids, "to"):
+            return prompt_ids.to(dtype=torch.long)
+        return prompt_ids
+    return torch.tensor(prompt_ids, dtype=torch.long)
 
 
 def get_local_gpu_whisper_initial_prompt() -> str:

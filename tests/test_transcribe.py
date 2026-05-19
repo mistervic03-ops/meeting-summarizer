@@ -13,6 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import numpy as np
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -364,7 +366,7 @@ class TranscribeTests(unittest.TestCase):
         self.assertEqual(prompt, "")
 
     def test_local_gpu_whisper_passes_vocabulary_prompt_ids_to_pipeline(self) -> None:
-        """pipeline tokenizer가 지원하면 canonical prompt를 prompt_ids로 전달합니다."""
+        """pipeline tokenizer가 numpy prompt ids를 반환해도 torch Tensor로 변환해 전달합니다."""
         inference_generate_kwargs: list[dict[str, object]] = []
         tokenizer_prompts: list[str] = []
 
@@ -372,10 +374,15 @@ class TranscribeTests(unittest.TestCase):
             def is_available(self) -> bool:
                 return True
 
+        class FakeTensor:
+            def __init__(self, value: object, dtype: object):
+                self.value = value
+                self.dtype = dtype
+
         class FakeTokenizer:
-            def get_prompt_ids(self, prompt: str) -> list[str]:
+            def get_prompt_ids(self, prompt: str) -> np.ndarray:
                 tokenizer_prompts.append(prompt)
-                return ["prompt-ids"]
+                return np.array([101, 202], dtype=np.int64)
 
         class FakePipeline:
             tokenizer = FakeTokenizer()
@@ -388,6 +395,8 @@ class TranscribeTests(unittest.TestCase):
         fake_torch.float16 = "float16"
         fake_torch.bfloat16 = "bfloat16"
         fake_torch.float32 = "float32"
+        fake_torch.long = "long"
+        fake_torch.tensor = lambda value, dtype: FakeTensor(value, dtype)
         fake_torch.cuda = FakeCuda()
         fake_transformers = types.ModuleType("transformers")
         fake_transformers.pipeline = lambda **_kwargs: FakePipeline()
@@ -421,10 +430,61 @@ class TranscribeTests(unittest.TestCase):
 
         self.assertEqual(transcript, "prompted transcript")
         self.assertEqual(tokenizer_prompts, ["BigxData, Tableau"])
-        self.assertEqual(
-            inference_generate_kwargs,
-            [{"language": "ko", "task": "transcribe", "prompt_ids": ["prompt-ids"]}],
+        self.assertEqual(len(inference_generate_kwargs), 1)
+        prompt_ids = inference_generate_kwargs[0]["prompt_ids"]
+        self.assertIsInstance(prompt_ids, FakeTensor)
+        self.assertEqual(prompt_ids.dtype, "long")
+        self.assertEqual(prompt_ids.value.tolist(), [101, 202])
+        self.assertEqual(inference_generate_kwargs[0]["language"], "ko")
+        self.assertEqual(inference_generate_kwargs[0]["task"], "transcribe")
+
+    def test_local_gpu_whisper_prompt_ids_conversion_failure_degrades_to_no_prompt(self) -> None:
+        """prompt_ids 변환이 실패해도 전사는 prompt 없이 계속됩니다."""
+        inference_generate_kwargs: list[dict[str, object]] = []
+
+        class FakeCuda:
+            def is_available(self) -> bool:
+                return True
+
+        class FakeTokenizer:
+            def get_prompt_ids(self, prompt: str) -> np.ndarray:
+                return np.array([101, 202], dtype=np.int64)
+
+        class FakePipeline:
+            tokenizer = FakeTokenizer()
+
+            def __call__(self, audio_path: str, return_timestamps: bool, generate_kwargs: dict[str, object]):
+                inference_generate_kwargs.append(generate_kwargs)
+                return {"text": "unprompted transcript"}
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = "float16"
+        fake_torch.bfloat16 = "bfloat16"
+        fake_torch.float32 = "float32"
+        fake_torch.long = "long"
+        fake_torch.tensor = Mock(side_effect=TypeError("bad prompt ids"))
+        fake_torch.cuda = FakeCuda()
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.pipeline = lambda **_kwargs: FakePipeline()
+        config = transformers_whisper.LocalGpuWhisperConfig(
+            model_name="openai/whisper-large-v3-turbo",
+            device="cuda:0",
+            torch_dtype="float16",
+            max_concurrency=1,
         )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            vocabulary_file.write_text("organization_terms:\n  - BigxData\n", encoding="utf-8")
+
+            with patch.dict(
+                os.environ,
+                {"STT_VOCABULARY_PATH": str(vocabulary_file), "ENABLE_STT_VOCABULARY_HINTS": "true"},
+            ), patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}):
+                transcript = transformers_whisper.transcribe_file(Path("meeting.wav"), config=config)
+
+        self.assertEqual(transcript, "unprompted transcript")
+        self.assertEqual(inference_generate_kwargs, [{"language": "ko", "task": "transcribe"}])
 
     def test_local_gpu_whisper_converts_m4a_to_wav_before_pipeline(self) -> None:
         """Transformers pipeline에 m4a를 직접 넘기지 않고 임시 WAV를 전달합니다."""
