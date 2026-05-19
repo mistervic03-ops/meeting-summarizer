@@ -22,6 +22,23 @@ function DecisionBadge({ status }: { status: Decision["status"] }) {
   );
 }
 
+function DecisionList({ decisions }: { decisions: Decision[] }) {
+  return (
+    <div className="border-y border-slate-300 dark:border-app-border">
+      {decisions.map((decision) => (
+        <article key={`${decision.status}-${decision.decision}`} className="border-b border-slate-200 py-3 last:border-b-0 dark:border-app-line">
+          <div className="flex items-start justify-between gap-3">
+            <p className="min-w-0 flex-1 break-words text-[13px] font-medium leading-[1.68] text-slate-900 dark:text-app-body">
+              {normalizeDisplayText(decision.decision)}
+            </p>
+            <DecisionBadge status={decision.status} />
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Renders the summary tab with facts, decisions, speakers, and warnings.
  */
@@ -43,32 +60,29 @@ export default function SummaryTab({
   const visibleSummaryFacts = summaryFacts ?? splitFacts.summaryFacts;
   const visibleDiscussionNotes = discussionNotes ?? splitFacts.discussionNotes;
   const decisions = result.decisions ?? [];
+  const confirmedDecisions = decisions.filter((decision) => decision.status === "확정");
+  const tentativeDecisions = decisions.filter((decision) => decision.status === "미확정");
   const speakerHighlights = result.speaker_highlights ?? [];
   const warnings = displayWarnings ?? result.warnings ?? [];
   const labels = getSummaryLabels(resolvedMeetingType);
   const sectionOrder = getSectionOrder(resolvedMeetingType);
   const sectionMap = {
-    decisions: (
-      <section key="decisions">
-        <SectionHeading count={decisions.length} title="주요 결정사항" />
-        {decisions.length ? (
-          <div className="border-y border-slate-300 dark:border-app-border">
-            {decisions.map((decision) => (
-              <article key={`${decision.status}-${decision.decision}`} className="border-b border-slate-200 py-3 last:border-b-0 dark:border-app-line">
-                <div className="flex items-start justify-between gap-3">
-                  <p className="min-w-0 flex-1 break-words text-[13px] font-medium leading-[1.68] text-slate-900 dark:text-app-body">
-                    {normalizeDisplayText(decision.decision)}
-                  </p>
-                  <DecisionBadge status={decision.status} />
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <EmptySection message="주요 결정사항이 없습니다." />
-        )}
-      </section>
-    ),
+    decisions: decisions.length ? (
+      <div key="decisions" className="space-y-7">
+        {confirmedDecisions.length ? (
+          <section>
+            <SectionHeading count={confirmedDecisions.length} title="주요 결정사항" />
+            <DecisionList decisions={confirmedDecisions} />
+          </section>
+        ) : null}
+        {tentativeDecisions.length ? (
+          <section>
+            <SectionHeading count={tentativeDecisions.length} title="검토/논의된 방향" />
+            <DecisionList decisions={tentativeDecisions} />
+          </section>
+        ) : null}
+      </div>
+    ) : null,
     notes: visibleDiscussionNotes.length ? (
       <section key="notes">
         <SectionHeading count={visibleDiscussionNotes.length} title={labels.discussionTitle} />
