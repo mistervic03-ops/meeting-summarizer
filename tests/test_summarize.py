@@ -2809,9 +2809,28 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("- 테스트 모드와 저장 흐름을 검토했습니다.", output)
         self.assertIn("- API 키 설정 확인이 필요합니다.", output)
         self.assertNotIn("이 줄은 빠른 요약에서 제외됩니다.", output)
-        self.assertIn("- ⚠️ 담당자: 미정 / 기한: 미정 / 할 일: 배포 확인", output)
+        self.assertIn("- ⚠️ 담당자: 확인 필요 / 기한: 미정 / 할 일: 배포 확인", output)
+        self.assertNotIn("담당자: 미정", output)
         self.assertIn("- 담당자: 이서연 / 기한: 2026-05-20 / 할 일: 샘플 검수", output)
         self.assertNotIn("## 액션 아이템\n-", output)
+
+    def test_build_summary_result_keeps_unresolved_owner_value_for_api(self) -> None:
+        """Markdown 표시와 달리 공개 구조화 결과의 owner 값은 호환성을 위해 미정으로 유지합니다."""
+        structure = {
+            "summary_facts": [],
+            "decisions": [],
+            "action_items": [
+                {"task": "배포 확인", "owner": "저", "due_date": "미정", "confidence": "low"},
+                {"task": "샘플 검수", "owner": "Speaker 1", "due_date": "2026-05-20", "confidence": "high"},
+            ],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+
+        result = summarize.build_summary_result(structure, "회의록")
+
+        self.assertEqual(result["action_items"][0]["owner"], "미정")
+        self.assertEqual(result["action_items"][1]["owner"], "Speaker 1")
 
     def test_render_output_separates_discussion_notes_for_technical_review(self) -> None:
         """기술 리뷰의 downgrade 메모는 요약이 아니라 논의 메모로 표시합니다."""

@@ -49,7 +49,32 @@ function getDefaultMeetingDate(): string {
  * Copies text to the clipboard when browser permissions allow it.
  */
 async function copyToClipboard(text: string): Promise<void> {
-  await navigator.clipboard.writeText(text);
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // 보안 컨텍스트나 권한 문제로 Clipboard API가 막히면 textarea fallback을 시도합니다.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+
+  try {
+    const copied = document.execCommand("copy");
+    if (!copied) {
+      throw new Error("Copy command failed.");
+    }
+  } finally {
+    document.body.removeChild(textarea);
+  }
 }
 
 /**

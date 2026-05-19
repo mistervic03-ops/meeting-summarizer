@@ -68,7 +68,7 @@ def render_output(structure: dict[str, Any], minutes_text: str, meeting_type: st
     if normalized_structure.action_items:
         for item in normalized_structure.action_items:
             tag = " ⚠️" if item.get("confidence") == "low" or as_text(item.get("due_date")) == "미정" else ""
-            owner = normalize_action_owner(as_text(item.get("owner")))
+            owner = format_action_owner_for_display(as_text(item.get("owner")))
             action_item_lines.append(
                 f"-{tag} 담당자: {owner} / "
                 f"기한: {as_text(item.get('due_date')) or '미정'} / "
@@ -80,6 +80,14 @@ def render_output(structure: dict[str, Any], minutes_text: str, meeting_type: st
 
     sections.append(f"## 📝 전체 회의록\n{deduplicated_minutes.strip() or '회의록 없음'}")
     return "\n\n".join(section for section in sections if section.strip()).strip()
+
+
+def format_action_owner_for_display(owner: str) -> str:
+    """Markdown 표시에서 미해결 담당자를 사람 확인이 필요한 상태로 부드럽게 보여줍니다."""
+    normalized_owner = normalize_action_owner(owner)
+    if normalized_owner == "미정":
+        return "확인 필요"
+    return normalized_owner
 
 
 def build_summary_result(structure: dict[str, Any], minutes_text: str) -> SummaryResult:
