@@ -90,7 +90,7 @@ cp .env.example .env
 - `OPENAI_SUMMARY_MODEL`
 - `CORS_ORIGINS`
 
-OpenAI STT와 요약 경로가 현재 production default입니다. GPU STT는 아직 운영 flow에 연결하지 않습니다.
+OpenAI STT와 요약 경로가 현재 안정 production default입니다. local GPU STT는 별도 compose overlay에서만 켜는 실험 운영 variant입니다.
 
 ## STT Provider 상태
 
@@ -114,7 +114,7 @@ CPU local Whisper에서 관찰한 문제:
 - `STT_PROVIDER=local_whisper`는 실험용으로 유지합니다.
 - `STT_PROVIDER=local_gpu_whisper`는 `docker-compose.local-gpu.yml` overlay에서만 켭니다.
 - diarized mode는 화자별 검토가 필요한 경우를 위한 고급/실험 옵션으로 유지합니다.
-- local Whisper GPU 통합은 먼저 plain path에서 평가하고, production integration 여부는 별도 판단합니다.
+- local GPU Whisper는 plain path와 resident shared model을 전제로 합니다. stable default 전환 여부는 별도 품질/운영 검증 후 판단합니다.
 
 ## GPU STT 평가 상태
 
@@ -155,7 +155,7 @@ torch.cuda.device_count() == 1
 GPU: NVIDIA GB10
 ```
 
-- PyTorch Transformers Whisper `openai/whisper-large-v3`가 GPU에 로드되었습니다.
+- PyTorch Transformers Whisper `openai/whisper-large-v3`와 `openai/whisper-large-v3-turbo` GPU inference가 확인되었습니다.
 - 69초 오디오가 long-form timestamp 설정 후 약 15.9초에 전사되었습니다.
 - 이 결과는 NGC PyTorch stack을 통한 local GPU STT 품질 평가가 가능함을 확인합니다.
 
@@ -210,7 +210,7 @@ HuggingFace cache는 `large-v3` 재평가에 유용하므로 당분간 유지합
 - 작업 상태는 인메모리입니다. 백엔드 프로세스를 재시작하면 진행 중이거나 완료된 job 상태가 사라집니다.
 - 업로드 원본 파일은 처리 후 삭제됩니다.
 - 현재 production STT 경로는 ffmpeg 기반 오디오 확인과 청크 분할 경로를 사용합니다.
-- GPU/CUDA는 아직 production OpenAI STT 경로에서는 사용하지 않습니다.
+- GPU/CUDA는 안정 OpenAI STT 경로에서는 사용하지 않습니다. local GPU variant는 `docker-compose.local-gpu.yml` overlay에서만 사용합니다.
 - Kubernetes, Spark distributed job, 별도 STT microservice는 현재 배포 범위가 아닙니다.
 
 ## 검증 순서
@@ -218,7 +218,7 @@ HuggingFace cache는 `large-v3` 재평가에 유용하므로 당분간 유지합
 백엔드와 공통 로직:
 
 ```bash
-python3 -m py_compile main.py app.py transcribe.py summarize.py backend/main.py backend/api/routes.py backend/services/pipeline.py backend/storage.py backend/schemas.py
+python3 -m py_compile main.py transcribe.py summarize.py backend/main.py backend/api/routes.py backend/services/pipeline.py backend/storage.py backend/schemas.py
 python3 -m unittest discover -s tests -v
 ```
 
