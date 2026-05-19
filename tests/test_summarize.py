@@ -1342,7 +1342,10 @@ class SummarizeTests(unittest.TestCase):
         self.assertIn("삭제하지 말고 confidence를 low", prompt)
         self.assertIn("1인칭으로 업무 수행을 말하면 owner는 \"제가\"나 \"저희\"가 아니라 해당 speaker label", prompt)
         self.assertIn("owner는 \"영업담당자\"", prompt)
-        self.assertIn("speaker label이 \"Speaker 2\"처럼 익명이어도 owner로 사용할 수 있습니다", prompt)
+        self.assertIn("\"Unknown\"은 실제 speaker나 owner가 아닙니다", prompt)
+        self.assertIn("owner로 사용하지 마세요", prompt)
+        self.assertIn("owner 근거가 \"Unknown\"뿐이거나 speaker label이 없으면 owner는 \"미정\"", prompt)
+        self.assertIn("\"Speaker 1\", \"Speaker 2\" 같은 speaker label은 transcript에 실제 source speaker label", prompt)
         self.assertIn("owner가 실제로 \"미정\"일 때만 담당자 확인 warning", prompt)
         self.assertIn("confidence가 low인 항목은 warnings에 추가", prompt)
         self.assertIn("due_date는 \"미정\"으로 두고 warnings에 추가", prompt)
@@ -1946,13 +1949,6 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
                     "source_quote": "제가 배포 확인을 2026-05-20까지 하겠습니다.",
                 },
                 {
-                    "task": "자료 정리",
-                    "owner": "Unknown",
-                    "due_date": "2026-05-21",
-                    "confidence": "high",
-                    "source_quote": "제가 자료 정리를 2026-05-21까지 하겠습니다.",
-                },
-                {
                     "task": "고객 공유",
                     "owner": "영업담당자",
                     "due_date": "2026-05-22",
@@ -1966,16 +1962,94 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         transcript = "\n".join(
             [
                 "[u_0001] Speaker 2: 제가 배포 확인을 2026-05-20까지 하겠습니다.",
-                "[u_0002] Unknown: 제가 자료 정리를 2026-05-21까지 하겠습니다.",
-                "[u_0003] 영업담당자: 제가 고객 공유를 2026-05-22까지 하겠습니다.",
+                "[u_0002] 영업담당자: 제가 고객 공유를 2026-05-22까지 하겠습니다.",
             ]
         )
 
         result = summarize.validate_structure(structure, transcript)
 
-        self.assertEqual([item["owner"] for item in result["action_items"]], ["Speaker 2", "Unknown", "영업담당자"])
+        self.assertEqual([item["owner"] for item in result["action_items"]], ["Speaker 2", "영업담당자"])
         self.assertFalse(any("담당자 확인 필요" in warning for warning in result["warnings"]))
         self.assertFalse(any("담당자 확인이 필요한 액션 아이템" in warning for warning in result["warnings"]))
+
+    def test_validate_structure_treats_unknown_speaker_owners_as_unresolved(self) -> None:
+        """Unknown 계열 owner는 plain transcript에서 실제 담당자로 보지 않습니다."""
+        transcript = "\n".join(
+            [
+                "제가 자료 정리를 2026-05-21까지 하겠습니다.",
+                "제가 로그 확인을 2026-05-22까지 하겠습니다.",
+                "제가 고객 공유를 2026-05-23까지 하겠습니다.",
+                "Speaker 1: 제가 배포 확인을 2026-05-24까지 하겠습니다.",
+            ]
+        )
+        structure = {
+            "summary_facts": [],
+            "decisions": [],
+            "action_items": [
+                {
+                    "task": "자료 정리",
+                    "owner": "Unknown",
+                    "due_date": "2026-05-21",
+                    "confidence": "high",
+                    "source_quote": "제가 자료 정리를 2026-05-21까지 하겠습니다.",
+                },
+                {
+                    "task": "로그 확인",
+                    "owner": "Speaker Unknown",
+                    "due_date": "2026-05-22",
+                    "confidence": "high",
+                    "source_quote": "제가 로그 확인을 2026-05-22까지 하겠습니다.",
+                },
+                {
+                    "task": "고객 공유",
+                    "owner": "화자 미상",
+                    "due_date": "2026-05-23",
+                    "confidence": "high",
+                    "source_quote": "제가 고객 공유를 2026-05-23까지 하겠습니다.",
+                },
+                {
+                    "task": "배포 확인",
+                    "owner": "Speaker 1",
+                    "due_date": "2026-05-24",
+                    "confidence": "high",
+                    "source_quote": "제가 배포 확인을 2026-05-24까지 하겠습니다.",
+                },
+            ],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+
+        result = summarize.validate_structure(structure, transcript)
+
+        self.assertEqual(
+            [item["owner"] for item in result["action_items"]],
+            ["미정", "미정", "미정", "Speaker 1"],
+        )
+        self.assertIn("자료 정리: 담당자 확인 필요", result["warnings"])
+        self.assertIn("로그 확인: 담당자 확인 필요", result["warnings"])
+        self.assertIn("고객 공유: 담당자 확인 필요", result["warnings"])
+        self.assertFalse(any("배포 확인: 담당자 확인 필요" == warning for warning in result["warnings"]))
+
+    def test_normalize_action_owner_treats_unknown_markers_as_unresolved(self) -> None:
+        """Unknown과 한국어 미상 표기는 모두 미정 owner로 정규화합니다."""
+        unresolved_owners = [
+            "Unknown",
+            "unknown",
+            "UNKNOWN",
+            "Speaker Unknown",
+            "speaker unknown",
+            "Unknown Speaker",
+            "unknown speaker",
+            "화자 미상",
+            "알 수 없음",
+            "미상",
+        ]
+
+        for owner in unresolved_owners:
+            with self.subTest(owner=owner):
+                self.assertEqual(summarize.normalize_action_owner(owner), "미정")
+
+        self.assertEqual(summarize.normalize_action_owner("Speaker 1"), "Speaker 1")
 
     def test_validate_structure_warns_only_when_owner_is_unknown_marker(self) -> None:
         """owner가 미정이면 기존 담당자 확인 warning은 유지합니다."""

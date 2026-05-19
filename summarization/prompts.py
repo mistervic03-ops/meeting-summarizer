@@ -88,7 +88,9 @@ def build_extraction_prompt(
 - 담당자, 기한, 원문 근거는 owner, due_date, source_quote 필드로 각각 분리하세요.
 - 발화자가 "제가 하겠습니다", "제가 하고 있습니다", "제가 할게요", "저희가 하겠습니다"처럼 1인칭으로 업무 수행을 말하면 owner는 "제가"나 "저희"가 아니라 해당 speaker label로 설정하세요.
 - 예: "[u_0013] 영업담당자: 제가 하고 있는데요."라면 owner는 "영업담당자"입니다.
-- speaker label이 "Speaker 2"처럼 익명이어도 owner로 사용할 수 있습니다.
+- "Unknown"은 실제 speaker나 owner가 아닙니다. owner로 사용하지 마세요.
+- owner 근거가 "Unknown"뿐이거나 speaker label이 없으면 owner는 "미정"으로 두세요.
+- "Speaker 1", "Speaker 2" 같은 speaker label은 transcript에 실제 source speaker label로 나타난 경우에만 owner로 사용할 수 있습니다.
 - speaker label 없이 owner를 알 수 없을 때만 owner를 "미정"으로 두세요.
 - action_items의 source_quote에는 transcript에 실제로 나온 짧은 근거 문장을 원문에 가깝게 넣으세요.
 - action_items의 source_quote는 요약하거나 재작성하지 말고 transcript의 실제 발화 일부를 그대로 복사하세요.

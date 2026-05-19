@@ -212,12 +212,18 @@ def unresolved_owner_keys() -> set[str]:
         "미정",
         "없음",
         "확인필요",
+        "unknown",
+        "speakerunknown",
+        "unknownspeaker",
         "저",
         "제가",
         "나",
         "내가",
         "우리",
         "저희",
+        "화자미상",
+        "알수없음",
+        "미상",
     }
 
 
