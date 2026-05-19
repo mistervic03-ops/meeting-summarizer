@@ -40,6 +40,19 @@ from summarization.openai_utils import (
     get_structure_model,
     get_summary_model,
 )
+from summarization.llm_provider import (
+    DEFAULT_CLAUDE_STRUCTURE_MODEL,
+    DEFAULT_CLAUDE_SUMMARY_MODEL,
+    collect_claude_text_parts,
+    create_anthropic_client,
+    extract_claude_response_text,
+    get_claude_structure_model,
+    get_claude_summary_model,
+    get_summarization_provider,
+    parse_claude_json_response,
+    request_claude_minutes_generation,
+    request_claude_structured_structure,
+)
 from summarization.glossary import (
     DEFAULT_SUMMARY_GLOSSARY_PATH,
     MAX_GLOSSARY_TERM_LENGTH,

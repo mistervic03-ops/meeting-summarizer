@@ -7,6 +7,7 @@ from typing import Any
 
 from openai import OpenAI
 
+from summarization.llm_provider import get_summarization_provider, request_claude_structured_structure
 from summarization.openai_utils import create_openai_client, extract_response_json, get_structure_model
 from summarization.prompts import STRUCTURE_SYSTEM_PROMPT, build_extraction_prompt
 from summarization.schemas import MEETING_STRUCTURE_SCHEMA
@@ -21,8 +22,11 @@ def extract_structure(
     glossary_terms: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """전처리된 전사문에서 구조화된 회의 사실을 추출합니다."""
-    client = create_openai_client()
     prompt = build_extraction_prompt(transcript, meeting_date, context, meeting_type, glossary_terms)
+    if get_summarization_provider() == "claude":
+        return request_claude_structured_structure(prompt)
+
+    client = create_openai_client()
     return request_structured_structure(client, prompt)
 
 

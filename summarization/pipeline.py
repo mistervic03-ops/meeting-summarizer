@@ -13,6 +13,7 @@ from openai import OpenAI
 from summarization.chunk_pipeline import extract_structure_by_chunks
 from summarization.extraction import extract_structure
 from summarization.glossary import get_summary_glossary_terms
+from summarization.llm_provider import get_summarization_provider, request_claude_minutes_generation
 from summarization.models import CHUNK_STRATEGY, DEEP_STRATEGY, NormalizedTranscript, PreprocessedTranscript, SummaryResult
 from summarization.normalization import extract_meeting_date, normalize_transcript, preprocess_transcript
 from summarization.openai_utils import create_openai_client, extract_response_text, get_summary_model
@@ -162,7 +163,6 @@ def generate_minutes(
     glossary_terms: Sequence[str] | None = None,
 ) -> str:
     """정리된 전사문과 검증된 JSON으로 자연스러운 한국어 회의록을 생성합니다."""
-    client = resolve_compat_name("create_openai_client", create_openai_client)()
     transcript_text = preprocessed_text.text if isinstance(preprocessed_text, PreprocessedTranscript) else preprocessed_text
     prompt = resolve_compat_name("build_minutes_prompt", build_minutes_prompt)(
         transcript_text,
@@ -171,6 +171,10 @@ def generate_minutes(
         meeting_type,
         glossary_terms,
     )
+    if resolve_compat_name("get_summarization_provider", get_summarization_provider)() == "claude":
+        return resolve_compat_name("request_claude_minutes_generation", request_claude_minutes_generation)(prompt)
+
+    client = resolve_compat_name("create_openai_client", create_openai_client)()
     return resolve_compat_name("request_minutes_generation", request_minutes_generation)(client, prompt)
 
 

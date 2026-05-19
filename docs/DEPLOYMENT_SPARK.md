@@ -94,12 +94,15 @@ cp .env.example .env
 - `OPENAI_API_KEY`
 - `OPENAI_STRUCTURE_MODEL`
 - `OPENAI_SUMMARY_MODEL`
+- `ANTHROPIC_API_KEY` (only when `SUMMARIZATION_PROVIDER=claude`)
+- `CLAUDE_STRUCTURE_MODEL=claude-sonnet-4-6` (only when `SUMMARIZATION_PROVIDER=claude`)
+- `CLAUDE_SUMMARY_MODEL=claude-sonnet-4-6` (only when `SUMMARIZATION_PROVIDER=claude`)
 - `CORS_ORIGINS`
 - `PLAIN_CHUNK_DURATION_SECONDS=300`
 - `LOCAL_GPU_MAX_CONCURRENCY=3`
 - `ENABLE_STT_VOCABULARY_HINTS=false`
 
-OpenAI 요약 경로는 유지합니다. OpenAI STT는 UI의 `고급 모드 / OpenAI API`에서 요청별로 선택할 수 있으며, 클라우드 API 비용이 발생할 수 있습니다.
+OpenAI 요약 경로는 유지합니다. Claude 요약은 `SUMMARIZATION_PROVIDER=claude`로 명시적으로 켭니다. OpenAI STT는 UI의 `고급 모드 / OpenAI API`에서 요청별로 선택할 수 있으며, 클라우드 API 비용이 발생할 수 있습니다.
 
 ## STT Provider 상태
 

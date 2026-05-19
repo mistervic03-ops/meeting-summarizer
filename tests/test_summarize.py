@@ -1367,6 +1367,7 @@ Speaker 1: 배포 확인
         with patch.dict(
             extraction_globals,
             {
+                "get_summarization_provider": Mock(return_value="openai"),
                 "create_openai_client": Mock(return_value=fake_client),
                 "request_structured_structure": request_mock,
             },
@@ -1376,6 +1377,26 @@ Speaker 1: 배포 확인
         self.assertEqual(result["warnings"], ["확인 필요"])
         request_mock.assert_called_once()
         self.assertIn("정리된 transcript", request_mock.call_args.args[1])
+
+    def test_extract_structure_can_use_claude_provider(self) -> None:
+        """SUMMARIZATION_PROVIDER=claude이면 구조 추출은 Claude 요청 함수로 분기합니다."""
+        request_mock = Mock(return_value={**empty_track_b_structure(), "warnings": ["Claude 확인"]})
+        openai_client_mock = Mock()
+        extraction_globals = summarize.extract_structure.__globals__
+        with patch.dict(
+            extraction_globals,
+            {
+                "get_summarization_provider": Mock(return_value="claude"),
+                "create_openai_client": openai_client_mock,
+                "request_claude_structured_structure": request_mock,
+            },
+        ):
+            result = summarize.extract_structure("정리된 transcript", "2026-05-14")
+
+        self.assertEqual(result["warnings"], ["Claude 확인"])
+        openai_client_mock.assert_not_called()
+        request_mock.assert_called_once()
+        self.assertIn("정리된 transcript", request_mock.call_args.args[0])
 
     def test_build_extraction_prompt_contains_required_principles(self) -> None:
         """구조 추출 프롬프트가 Track B warning 원칙을 포함합니다."""
@@ -1798,6 +1819,41 @@ terms:
         self.assertIn("source_quote", action_item_schema["properties"])
         self.assertIn("source_utterance_ids", action_item_schema["properties"])
         self.assertNotIn("default", action_item_schema["properties"]["source_utterance_ids"])
+
+    def test_request_claude_structured_structure_parses_json_response(self) -> None:
+        """Claude 구조 추출은 JSON 텍스트를 기존 structure shape로 정규화합니다."""
+        response_json = {
+            "summary_facts": ["핵심 논의"],
+            "decisions": [],
+            "action_items": [],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+        fake_response = types.SimpleNamespace(
+            content=[types.SimpleNamespace(text=json.dumps(response_json, ensure_ascii=False))]
+        )
+        fake_client = types.SimpleNamespace(messages=types.SimpleNamespace(create=Mock(return_value=fake_response)))
+        claude_globals = summarize.request_claude_structured_structure.__globals__
+
+        with patch.dict(claude_globals, {"create_anthropic_client": Mock(return_value=fake_client)}):
+            result = summarize.request_claude_structured_structure("구조 추출 prompt")
+
+        self.assertEqual(result, response_json)
+        call_kwargs = fake_client.messages.create.call_args.kwargs
+        self.assertEqual(call_kwargs["model"], summarize.DEFAULT_CLAUDE_STRUCTURE_MODEL)
+        self.assertIn("구조 추출 prompt", call_kwargs["messages"][0]["content"])
+        self.assertIn("<OUTPUT_SCHEMA>", call_kwargs["messages"][0]["content"])
+        self.assertIn("JSON object 하나만 반환", call_kwargs["messages"][0]["content"])
+
+    def test_request_claude_structured_structure_rejects_malformed_json(self) -> None:
+        """Claude 구조 추출 응답이 JSON object가 아니면 명확히 실패합니다."""
+        fake_response = types.SimpleNamespace(content=[types.SimpleNamespace(text="설명: JSON이 아닙니다")])
+        fake_client = types.SimpleNamespace(messages=types.SimpleNamespace(create=Mock(return_value=fake_response)))
+        claude_globals = summarize.request_claude_structured_structure.__globals__
+
+        with patch.dict(claude_globals, {"create_anthropic_client": Mock(return_value=fake_client)}):
+            with self.assertRaisesRegex(RuntimeError, "Claude structure extraction request failed"):
+                summarize.request_claude_structured_structure("구조 추출 prompt")
 
     def test_meeting_structure_schema_matches_strict_json_schema_subset(self) -> None:
         """OpenAI strict Structured Output에 넘길 schema의 object 필수 조건을 확인합니다."""
@@ -2812,6 +2868,36 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("액션 아이템", prompt)
         self.assertIn("주요 발언/논의 포인트", prompt)
 
+    def test_generate_minutes_can_use_claude_provider(self) -> None:
+        """SUMMARIZATION_PROVIDER=claude이면 회의록 생성은 Claude 요청 함수로 분기합니다."""
+        structure = empty_track_b_structure()
+        claude_request_mock = Mock(return_value="Claude 회의록")
+        openai_client_mock = Mock()
+
+        with patch.object(summarize, "get_summarization_provider", Mock(return_value="claude")), patch.object(
+            summarize, "request_claude_minutes_generation", claude_request_mock
+        ), patch.object(summarize, "create_openai_client", openai_client_mock):
+            result = summarize.generate_minutes("회의 내용", structure)
+
+        self.assertEqual(result, "Claude 회의록")
+        openai_client_mock.assert_not_called()
+        claude_request_mock.assert_called_once()
+        self.assertIn("아래 JSON은 이미 검증된 사실입니다.", claude_request_mock.call_args.args[0])
+
+    def test_request_claude_minutes_generation_returns_text(self) -> None:
+        """Claude 회의록 생성은 message content의 텍스트를 반환합니다."""
+        fake_response = types.SimpleNamespace(content=[types.SimpleNamespace(text="자연스러운 Claude 회의록")])
+        fake_client = types.SimpleNamespace(messages=types.SimpleNamespace(create=Mock(return_value=fake_response)))
+        claude_globals = summarize.request_claude_minutes_generation.__globals__
+
+        with patch.dict(claude_globals, {"create_anthropic_client": Mock(return_value=fake_client)}):
+            result = summarize.request_claude_minutes_generation("회의록 prompt")
+
+        self.assertEqual(result, "자연스러운 Claude 회의록")
+        call_kwargs = fake_client.messages.create.call_args.kwargs
+        self.assertEqual(call_kwargs["model"], summarize.DEFAULT_CLAUDE_SUMMARY_MODEL)
+        self.assertEqual(call_kwargs["messages"], [{"role": "user", "content": "회의록 prompt"}])
+
     def test_build_minutes_prompt_separates_confirmed_and_tentative_decisions(self) -> None:
         """회의록 생성 프롬프트는 확정 결정과 미확정 논의를 구분하도록 지시합니다."""
         structure = empty_track_b_structure()
@@ -2959,6 +3045,40 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
             "nested text",
         )
 
+    def test_claude_response_text_supports_common_response_shapes(self) -> None:
+        """Claude message 응답 객체와 dict에서 텍스트를 추출합니다."""
+        self.assertEqual(
+            summarize.extract_claude_response_text(types.SimpleNamespace(content=[types.SimpleNamespace(text="object text")])),
+            "object text",
+        )
+        self.assertEqual(
+            summarize.extract_claude_response_text({"content": [{"type": "text", "text": "dict text"}]}),
+            "dict text",
+        )
+
+    def test_get_summarization_provider_defaults_to_openai(self) -> None:
+        """요약 provider 기본값은 기존 OpenAI 경로입니다."""
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(summarize.get_summarization_provider(), "openai")
+
+    def test_get_summarization_provider_accepts_claude(self) -> None:
+        """환경 변수로 Claude 요약 provider를 선택할 수 있습니다."""
+        with patch.dict(os.environ, {"SUMMARIZATION_PROVIDER": "claude"}, clear=True):
+            self.assertEqual(summarize.get_summarization_provider(), "claude")
+
+    def test_get_summarization_provider_rejects_unknown_provider(self) -> None:
+        """지원하지 않는 요약 provider는 명확히 거절합니다."""
+        with patch.dict(os.environ, {"SUMMARIZATION_PROVIDER": "unknown"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "Unsupported SUMMARIZATION_PROVIDER"):
+                summarize.get_summarization_provider()
+
+    def test_create_anthropic_client_requires_api_key(self) -> None:
+        """Claude provider는 ANTHROPIC_API_KEY가 없으면 명확히 실패합니다."""
+        claude_globals = summarize.create_anthropic_client.__globals__
+        with patch.dict(os.environ, {}, clear=True), patch.dict(claude_globals, {"load_dotenv": Mock()}):
+            with self.assertRaisesRegex(RuntimeError, "ANTHROPIC_API_KEY is missing"):
+                summarize.create_anthropic_client()
+
     def test_get_structure_model_uses_env_override(self) -> None:
         """환경 변수로 구조 추출 모델명을 덮어쓸 수 있습니다."""
         with patch.dict(os.environ, {"OPENAI_STRUCTURE_MODEL": "custom-structure"}):
@@ -2968,6 +3088,16 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         """환경 변수로 회의록 생성 모델명을 덮어쓸 수 있습니다."""
         with patch.dict(os.environ, {"OPENAI_SUMMARY_MODEL": "custom-summary"}):
             self.assertEqual(summarize.get_summary_model(), "custom-summary")
+
+    def test_get_claude_structure_model_uses_env_override(self) -> None:
+        """환경 변수로 Claude 구조 추출 모델명을 덮어쓸 수 있습니다."""
+        with patch.dict(os.environ, {"CLAUDE_STRUCTURE_MODEL": "custom-claude-structure"}):
+            self.assertEqual(summarize.get_claude_structure_model(), "custom-claude-structure")
+
+    def test_get_claude_summary_model_uses_env_override(self) -> None:
+        """환경 변수로 Claude 회의록 생성 모델명을 덮어쓸 수 있습니다."""
+        with patch.dict(os.environ, {"CLAUDE_SUMMARY_MODEL": "custom-claude-summary"}):
+            self.assertEqual(summarize.get_claude_summary_model(), "custom-claude-summary")
 
 
 if __name__ == "__main__":
