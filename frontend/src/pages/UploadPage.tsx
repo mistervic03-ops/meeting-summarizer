@@ -15,9 +15,10 @@ const CONTEXT_ACCEPT = ".md,.txt";
 const CONTEXT_HELP_TEXT = "회의명, 프로젝트 용어, 참석자 이름 등을 함께 넣으면\n약어·고유명사·담당자 인식 정확도를 높이는 데 도움이 됩니다.";
 const SPEAKER_MODE_HELP_TEXT = "실험적 고급 모드입니다.\n화자별 발화를 따로 검토해야 할 때만 사용하세요.";
 const TRANSCRIPTION_PROGRESS_STEPS = [
-  { label: "파일 준비", progress: 10 },
-  { label: "내용 정리", progress: 95 },
-  { label: "검토 준비", progress: 100 }
+  { label: "업로드 준비", progress: 10 },
+  { label: "음성 분석 준비", progress: 20 },
+  { label: "음성 변환", progress: 70 },
+  { label: "결과 정리", progress: 100 }
 ];
 
 const TRANSCRIPTION_MODES: Array<{

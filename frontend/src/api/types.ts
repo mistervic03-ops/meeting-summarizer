@@ -17,6 +17,8 @@ export interface JobStatusResponse {
   progress: number;
   stage: string;
   message: string;
+  completed_chunks?: number | null;
+  total_chunks?: number | null;
   stt_seconds?: number | null;
   summary_seconds?: number | null;
 }
