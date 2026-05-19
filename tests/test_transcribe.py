@@ -328,6 +328,104 @@ class TranscribeTests(unittest.TestCase):
 
         self.assertEqual(pipeline_load_count, 1)
 
+    def test_local_gpu_whisper_initial_prompt_uses_only_organization_terms(self) -> None:
+        """local_gpu_whisper prompt는 canonical organization_terms만 사용합니다."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            vocabulary_file.write_text(
+                "\n".join(
+                    [
+                        "organization_terms:",
+                        "  - BigxData",
+                        "  - Agent Works",
+                        "  - bigxdata",
+                        "aliases:",
+                        "  - 비식데이터",
+                        "descriptions:",
+                        "  - BigxData is an internal company term.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(os.environ, {"STT_VOCABULARY_PATH": str(vocabulary_file), "ENABLE_STT_VOCABULARY_HINTS": "true"}):
+                prompt = transformers_whisper.get_local_gpu_whisper_initial_prompt()
+
+        self.assertEqual(prompt, "BigxData, Agent Works")
+
+    def test_local_gpu_whisper_initial_prompt_missing_file_degrades_gracefully(self) -> None:
+        """vocabulary 파일이 없어도 local_gpu_whisper prompt는 빈 값으로 안전하게 비활성화됩니다."""
+        with patch.dict(
+            os.environ,
+            {"STT_VOCABULARY_PATH": "/tmp/missing-local-gpu-stt-vocabulary.yaml", "ENABLE_STT_VOCABULARY_HINTS": "true"},
+        ):
+            prompt = transformers_whisper.get_local_gpu_whisper_initial_prompt()
+
+        self.assertEqual(prompt, "")
+
+    def test_local_gpu_whisper_passes_vocabulary_prompt_ids_to_pipeline(self) -> None:
+        """pipeline tokenizer가 지원하면 canonical prompt를 prompt_ids로 전달합니다."""
+        inference_generate_kwargs: list[dict[str, object]] = []
+        tokenizer_prompts: list[str] = []
+
+        class FakeCuda:
+            def is_available(self) -> bool:
+                return True
+
+        class FakeTokenizer:
+            def get_prompt_ids(self, prompt: str) -> list[str]:
+                tokenizer_prompts.append(prompt)
+                return ["prompt-ids"]
+
+        class FakePipeline:
+            tokenizer = FakeTokenizer()
+
+            def __call__(self, audio_path: str, return_timestamps: bool, generate_kwargs: dict[str, object]):
+                inference_generate_kwargs.append(generate_kwargs)
+                return {"text": "prompted transcript"}
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = "float16"
+        fake_torch.bfloat16 = "bfloat16"
+        fake_torch.float32 = "float32"
+        fake_torch.cuda = FakeCuda()
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.pipeline = lambda **_kwargs: FakePipeline()
+        config = transformers_whisper.LocalGpuWhisperConfig(
+            model_name="openai/whisper-large-v3-turbo",
+            device="cuda:0",
+            torch_dtype="float16",
+            max_concurrency=1,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            vocabulary_file.write_text(
+                "\n".join(
+                    [
+                        "organization_terms:",
+                        "  - BigxData",
+                        "  - Tableau",
+                        "aliases:",
+                        "  - 태블로",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {"STT_VOCABULARY_PATH": str(vocabulary_file), "ENABLE_STT_VOCABULARY_HINTS": "true"},
+            ), patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}):
+                transcript = transformers_whisper.transcribe_file(Path("meeting.wav"), config=config)
+
+        self.assertEqual(transcript, "prompted transcript")
+        self.assertEqual(tokenizer_prompts, ["BigxData, Tableau"])
+        self.assertEqual(
+            inference_generate_kwargs,
+            [{"language": "ko", "task": "transcribe", "prompt_ids": ["prompt-ids"]}],
+        )
+
     def test_local_gpu_whisper_converts_m4a_to_wav_before_pipeline(self) -> None:
         """Transformers pipeline에 m4a를 직접 넘기지 않고 임시 WAV를 전달합니다."""
         inference_calls: list[str] = []

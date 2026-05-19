@@ -20,12 +20,15 @@ DEFAULT_LOCAL_GPU_TORCH_DTYPE = "float16"
 DEFAULT_LOCAL_GPU_MAX_CONCURRENCY = 4
 DEFAULT_LOCAL_GPU_LANGUAGE = "ko"
 DEFAULT_LOCAL_GPU_TASK = "transcribe"
+MAX_LOCAL_GPU_WHISPER_PROMPT_CHARS = 500
 
 _pipeline_cache: dict[tuple[str, str, str], Any] = {}
 _pipeline_lock = Lock()
 _semaphore_lock = Lock()
+_prompt_lock = Lock()
 _inference_semaphore: BoundedSemaphore | None = None
 _inference_semaphore_size: int | None = None
+_initial_prompt_cache: dict[tuple[str, int, bool], str] = {}
 
 
 @dataclass(frozen=True)
@@ -126,10 +129,7 @@ def transcribe_file(audio_path: Path, config: LocalGpuWhisperConfig | None = Non
             result = transcriber(
                 str(prepared_audio_path),
                 return_timestamps=True,
-                generate_kwargs={
-                    "language": resolved_config.language,
-                    "task": resolved_config.task,
-                },
+                generate_kwargs=build_generate_kwargs(resolved_config, transcriber),
             )
             elapsed_seconds = time.perf_counter() - started_at
 
@@ -190,6 +190,119 @@ def prepare_audio_for_transformers(audio_path: Path) -> tuple[Path, Path | None]
         time.perf_counter() - started_at,
     )
     return output_path, output_path
+
+
+def build_generate_kwargs(config: LocalGpuWhisperConfig, transcriber: Any) -> dict[str, Any]:
+    """Whisper generate 옵션에 보수적인 glossary prompt를 선택적으로 추가합니다."""
+    generate_kwargs: dict[str, Any] = {
+        "language": config.language,
+        "task": config.task,
+    }
+    prompt_ids = build_whisper_prompt_ids(transcriber)
+    if prompt_ids is not None:
+        generate_kwargs["prompt_ids"] = prompt_ids
+    return generate_kwargs
+
+
+def build_whisper_prompt_ids(transcriber: Any) -> Any | None:
+    """pipeline tokenizer가 지원할 때만 initial prompt token을 생성합니다."""
+    tokenizer = getattr(transcriber, "tokenizer", None)
+    if tokenizer is None or not hasattr(tokenizer, "get_prompt_ids"):
+        return None
+
+    prompt = get_local_gpu_whisper_initial_prompt()
+    if not prompt:
+        return None
+
+    try:
+        prompt_ids = tokenizer.get_prompt_ids(prompt)
+    except Exception as exc:
+        logger.warning("local_gpu_whisper_prompt_ids_failed error=%s", exc)
+        return None
+
+    logger.info("local_gpu_whisper_prompt_enabled prompt_chars=%s", len(prompt))
+    return prompt_ids
+
+
+def get_local_gpu_whisper_initial_prompt() -> str:
+    """기존 STT vocabulary에서 organization_terms만 읽어 process-local prompt로 cache합니다."""
+    try:
+        from transcribe import get_stt_vocabulary_path, stt_vocabulary_hints_enabled
+
+        enabled = stt_vocabulary_hints_enabled()
+        vocabulary_path = get_stt_vocabulary_path()
+    except Exception as exc:
+        logger.warning("local_gpu_whisper_prompt_config_failed error=%s", exc)
+        return ""
+
+    cache_key = (str(vocabulary_path), MAX_LOCAL_GPU_WHISPER_PROMPT_CHARS, enabled)
+    cached_prompt = _initial_prompt_cache.get(cache_key)
+    if cached_prompt is not None:
+        return cached_prompt
+
+    with _prompt_lock:
+        cached_prompt = _initial_prompt_cache.get(cache_key)
+        if cached_prompt is not None:
+            return cached_prompt
+        if not enabled:
+            prompt = ""
+        else:
+            terms = load_organization_terms(vocabulary_path)
+            prompt = build_canonical_terms_prompt(terms)
+        _initial_prompt_cache[cache_key] = prompt
+        return prompt
+
+
+def load_organization_terms(vocabulary_path: Path) -> list[str]:
+    """기존 vocabulary YAML에서 organization_terms 섹션의 canonical term만 읽습니다."""
+    try:
+        lines = vocabulary_path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    except Exception as exc:
+        logger.warning("local_gpu_whisper_vocabulary_load_failed path=%s error=%s", vocabulary_path, exc)
+        return []
+
+    try:
+        from transcribe import parse_stt_vocabulary_line
+    except Exception as exc:
+        logger.warning("local_gpu_whisper_vocabulary_parser_unavailable error=%s", exc)
+        return []
+
+    terms: list[str] = []
+    in_organization_terms = False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line.startswith((" ", "\t")) and stripped.endswith(":"):
+            in_organization_terms = stripped == "organization_terms:"
+            continue
+        if not in_organization_terms:
+            continue
+        term = parse_stt_vocabulary_line(line)
+        if term is not None:
+            terms.append(term)
+    return terms
+
+
+def build_canonical_terms_prompt(terms: list[str]) -> str:
+    """canonical term 목록을 짧은 comma-separated Whisper prompt로 만듭니다."""
+    try:
+        from transcribe import deduplicate_stt_vocabulary_terms
+
+        vocabulary_terms = deduplicate_stt_vocabulary_terms(terms)
+    except Exception as exc:
+        logger.warning("local_gpu_whisper_vocabulary_dedupe_failed error=%s", exc)
+        return ""
+
+    selected_terms: list[str] = []
+    for term in vocabulary_terms:
+        candidate_prompt = ", ".join([*selected_terms, term])
+        if len(candidate_prompt) > MAX_LOCAL_GPU_WHISPER_PROMPT_CHARS:
+            break
+        selected_terms.append(term)
+    return ", ".join(selected_terms)
 
 
 def get_inference_semaphore(max_concurrency: int) -> BoundedSemaphore:
@@ -270,3 +383,5 @@ def reset_resident_pipeline_for_tests() -> None:
     with _semaphore_lock:
         _inference_semaphore = None
         _inference_semaphore_size = None
+    with _prompt_lock:
+        _initial_prompt_cache.clear()
