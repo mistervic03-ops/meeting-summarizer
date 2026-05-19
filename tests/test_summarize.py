@@ -279,6 +279,85 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(normalized.text, "오늘 회의는 네 가지 안건입니다.")
         self.assertEqual(normalized.render_for_llm(), "[u_0001] Unknown: 오늘 회의는 네 가지 안건입니다.")
 
+    def test_normalize_transcript_treats_common_colon_headings_as_plain_text(self) -> None:
+        """plain transcript의 일반 heading/key label은 speaker로 보지 않습니다."""
+        heading_lines = [
+            "회의 목적: KT와 향후 협력 방향 논의",
+            "안건: Tableau 대시보드 전환",
+            "이슈: Salesforce 연동 지연",
+            "TODO: MCP 검토",
+            "API: 응답 속도 확인 필요",
+            "Q: 이 방식이 가능한가요?",
+            "A: 가능합니다",
+            "결론: 다음 주 POC 진행",
+            "참석자: 홍길동, 김철수",
+        ]
+
+        for line in heading_lines:
+            with self.subTest(line=line):
+                normalized = summarize.normalize_transcript(line)
+
+                self.assertEqual(len(normalized.utterances), 1)
+                self.assertIsNone(normalized.utterances[0].speaker)
+                self.assertEqual(normalized.utterances[0].text, line)
+                self.assertEqual(normalized.text, line)
+
+    def test_normalize_transcript_plain_heading_does_not_create_speaker_continuation(self) -> None:
+        """denylist heading 다음 plain 줄은 fake speaker의 continuation이 되지 않습니다."""
+        transcript = """
+회의 목적: KT와 향후 협력 방향 논의
+추가 논의 범위를 확인합니다.
+김민수: 배포 확인
+""".strip()
+
+        normalized = summarize.normalize_transcript(transcript)
+
+        self.assertEqual([utterance.speaker for utterance in normalized.utterances], [None, None, "김민수"])
+        self.assertEqual(normalized.utterances[0].text, "회의 목적: KT와 향후 협력 방향 논의")
+        self.assertEqual(normalized.utterances[1].text, "추가 논의 범위를 확인합니다.")
+        self.assertEqual(normalized.utterances[2].text, "배포 확인")
+        self.assertEqual(
+            normalized.render_for_llm(),
+            "\n".join(
+                [
+                    "[u_0001] Unknown: 회의 목적: KT와 향후 협력 방향 논의",
+                    "[u_0002] Unknown: 추가 논의 범위를 확인합니다.",
+                    "[u_0003] 김민수: 배포 확인",
+                ]
+            ),
+        )
+
+    def test_normalize_transcript_preserves_real_speaker_labels_after_heading_denylist(self) -> None:
+        """실제 speaker label은 plain heading denylist와 별개로 계속 보존합니다."""
+        transcript = """
+Speaker 1: 배포 확인
+[Speaker 1]: 추가 확인
+김민수: 품질 검수
+영업담당자: 고객 공유
+""".strip()
+
+        normalized = summarize.normalize_transcript(transcript)
+
+        self.assertEqual(
+            [utterance.speaker for utterance in normalized.utterances],
+            ["Speaker 1", "김민수", "영업담당자"],
+        )
+        self.assertEqual(normalized.utterances[0].text, "배포 확인 추가 확인")
+        self.assertEqual(normalized.utterances[1].text, "품질 검수")
+        self.assertEqual(normalized.utterances[2].text, "고객 공유")
+
+    def test_is_plain_heading_label_matches_narrow_denylist(self) -> None:
+        """heading denylist는 공백과 대소문자를 정규화하되 실제 speaker label은 제외합니다."""
+        from summarization.normalization import is_plain_heading_label
+
+        self.assertTrue(is_plain_heading_label("회의 목적"))
+        self.assertTrue(is_plain_heading_label("회의목적"))
+        self.assertTrue(is_plain_heading_label("To Do"))
+        self.assertTrue(is_plain_heading_label("API"))
+        self.assertFalse(is_plain_heading_label("Speaker 1"))
+        self.assertFalse(is_plain_heading_label("김민수"))
+        self.assertFalse(is_plain_heading_label("영업담당자"))
+
     def test_structured_transcript_payload_to_normalized_transcript_preserves_metadata(self) -> None:
         """structured transcript payload는 발화 ID, 화자, timestamp를 보존합니다."""
         normalized = summarize.structured_transcript_payload_to_normalized_transcript(
