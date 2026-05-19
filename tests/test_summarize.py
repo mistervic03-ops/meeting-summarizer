@@ -6,10 +6,11 @@ import importlib
 import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -695,7 +696,13 @@ class SummarizeTests(unittest.TestCase):
             events.append("segment")
             return chunks
 
-        def extract_side_effect(chunk_text: str, meeting_date: str, context: str = "", meeting_type: str = "general"):
+        def extract_side_effect(
+            chunk_text: str,
+            meeting_date: str,
+            context: str = "",
+            meeting_type: str = "general",
+            glossary_terms: list[str] | None = None,
+        ):
             """호출 순서를 확인하기 위해 extract 이벤트를 기록합니다."""
             events.append(f"extract:{chunk_text}")
             if chunk_text == "김민수: 첫 번째 논의":
@@ -716,13 +723,26 @@ class SummarizeTests(unittest.TestCase):
                 context="VIP 프로젝트",
                 max_utterances=1,
                 overlap_utterances=0,
+                glossary_terms=["BigQuery"],
             )
 
         self.assertEqual(result, merged_structure)
         segment_mock.assert_called_once_with(normalized, max_utterances=1, overlap_utterances=0)
         self.assertEqual(extract_mock.call_count, 2)
-        extract_mock.assert_any_call("김민수: 첫 번째 논의", "2026-05-14", "VIP 프로젝트", meeting_type="general")
-        extract_mock.assert_any_call("이서연: 두 번째 논의", "2026-05-14", "VIP 프로젝트", meeting_type="general")
+        extract_mock.assert_any_call(
+            "김민수: 첫 번째 논의",
+            "2026-05-14",
+            "VIP 프로젝트",
+            meeting_type="general",
+            glossary_terms=["BigQuery"],
+        )
+        extract_mock.assert_any_call(
+            "이서연: 두 번째 논의",
+            "2026-05-14",
+            "VIP 프로젝트",
+            meeting_type="general",
+            glossary_terms=["BigQuery"],
+        )
         merge_mock.assert_called_once_with([first_structure, second_structure])
         self.assertEqual(
             events,
@@ -872,12 +892,18 @@ class SummarizeTests(unittest.TestCase):
         profile_mock.assert_called_once()
         self.assertEqual(profile_mock.call_args.args[0].text, "정리된 transcript")
         strategy_mock.assert_called_once_with(profile)
-        extract_mock.assert_called_once_with("[u_0001] Unknown: 정리된 transcript", "2026-05-14", "", "general")
+        extract_mock.assert_called_once_with(
+            "[u_0001] Unknown: 정리된 transcript",
+            "2026-05-14",
+            "",
+            "general",
+            glossary_terms=ANY,
+        )
         validate_mock.assert_called_once()
         self.assertEqual(validate_mock.call_args.args[0], structure)
         self.assertEqual(validate_mock.call_args.args[1], "정리된 transcript")
         self.assertEqual(validate_mock.call_args.args[2].text, "정리된 transcript")
-        generate_mock.assert_called_once_with("정리된 transcript", structure, "", "general")
+        generate_mock.assert_called_once_with("정리된 transcript", structure, "", "general", glossary_terms=ANY)
         render_mock.assert_called_once_with(structure, "자연어 회의록", "general")
         self.assertTrue(any(call.args == ("summarize_transcript selected_strategy=%s", "direct") for call in log_mock.call_args_list))
         self.assertTrue(
@@ -939,11 +965,12 @@ class SummarizeTests(unittest.TestCase):
             "2026-05-14",
             "",
             "general",
+            glossary_terms=ANY,
         )
         validate_mock.assert_called_once()
         self.assertEqual(validate_mock.call_args.args[1], normalized.text)
         self.assertIs(validate_mock.call_args.args[2], normalized)
-        generate_mock.assert_called_once_with(normalized.text, structure, "", "general")
+        generate_mock.assert_called_once_with(normalized.text, structure, "", "general", glossary_terms=ANY)
 
     def test_summarize_transcript_uses_chunk_extraction_for_chunk_strategy(self) -> None:
         """chunk 전략은 chunk runner 결과를 merge 후 validation으로 한 번만 넘깁니다."""
@@ -980,13 +1007,39 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(meeting_date_arg, "2026-05-14")
         self.assertEqual(context_arg, "")
         self.assertEqual(chunk_runner_mock.call_args.kwargs["meeting_type"], "general")
+        self.assertEqual(chunk_runner_mock.call_args.kwargs["glossary_terms"], summarize.get_summary_glossary_terms())
         validate_mock.assert_called_once()
         self.assertEqual(validate_mock.call_args.args[0], chunk_structure)
         self.assertEqual(validate_mock.call_args.args[1], "정리된 transcript")
         self.assertEqual(validate_mock.call_args.args[2].text, "정리된 transcript")
-        generate_mock.assert_called_once_with("정리된 transcript", validated_structure, "", "general")
+        generate_mock.assert_called_once_with("정리된 transcript", validated_structure, "", "general", glossary_terms=ANY)
         render_mock.assert_called_once_with(validated_structure, "자연어 회의록", "general")
         self.assertTrue(any(call.args == ("summarize_transcript using chunk extraction path",) for call in log_mock.call_args_list))
+
+    def test_summarize_transcript_loads_glossary_once_for_chunk_extraction(self) -> None:
+        """chunk 경로에서도 요약 용어집은 summarize_transcript 단위로 한 번만 로드됩니다."""
+        transcript = "\n".join(f"김민수: {index}번째 확인하겠습니다." for index in range(100))
+        structure = empty_track_b_structure()
+        glossary_terms = ["BigQuery", "Tableau"]
+
+        with patch.object(summarize, "get_summary_glossary_terms", return_value=glossary_terms) as glossary_mock, patch.object(
+            summarize,
+            "extract_structure_by_chunks",
+            create=True,
+            return_value=structure,
+        ) as chunk_runner_mock, patch.object(
+            summarize, "validate_structure", return_value=structure
+        ), patch.object(
+            summarize, "generate_minutes", return_value="자연어 회의록"
+        ) as generate_mock, patch.object(
+            summarize, "render_output", return_value="최종 출력"
+        ):
+            summarize.summarize_transcript(transcript)
+
+        glossary_mock.assert_called_once_with()
+        chunk_runner_mock.assert_called_once()
+        self.assertEqual(chunk_runner_mock.call_args.kwargs["glossary_terms"], glossary_terms)
+        generate_mock.assert_called_once_with(ANY, structure, "", "general", glossary_terms=glossary_terms)
 
     def test_summarize_transcript_cleans_chunk_public_warnings(self) -> None:
         """chunk mode에서 병합된 raw warning도 공개 결과에서는 표시용 문장으로 정리합니다."""
@@ -1092,12 +1145,18 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(result["minutes"], "최종 출력")
         self.assertEqual(result["summary_facts"], [])
         self.assertEqual(result["action_items"], [])
-        extract_mock.assert_called_once_with("[u_0001] Unknown: 정리된 transcript", "2026-05-14", "", "general")
+        extract_mock.assert_called_once_with(
+            "[u_0001] Unknown: 정리된 transcript",
+            "2026-05-14",
+            "",
+            "general",
+            glossary_terms=ANY,
+        )
         validate_mock.assert_called_once()
         self.assertEqual(validate_mock.call_args.args[0], structure)
         self.assertEqual(validate_mock.call_args.args[1], "정리된 transcript")
         self.assertEqual(validate_mock.call_args.args[2].text, "정리된 transcript")
-        generate_mock.assert_called_once_with("정리된 transcript", structure, "", "general")
+        generate_mock.assert_called_once_with("정리된 transcript", structure, "", "general", glossary_terms=ANY)
         render_mock.assert_called_once_with(structure, "자연어 회의록", "general")
 
     def test_summarize_transcript_passes_context_to_model_steps(self) -> None:
@@ -1114,8 +1173,14 @@ class SummarizeTests(unittest.TestCase):
         ) as generate_mock, patch.object(summarize, "render_output", return_value="최종 출력"):
             summarize.summarize_transcript("raw transcript", context="VIP 프로젝트: 중요 고객")
 
-        extract_mock.assert_called_once_with("[u_0001] Unknown: 정리된 transcript", "2026-05-14", "VIP 프로젝트: 중요 고객", "general")
-        generate_mock.assert_called_once_with("정리된 transcript", structure, "VIP 프로젝트: 중요 고객", "general")
+        extract_mock.assert_called_once_with(
+            "[u_0001] Unknown: 정리된 transcript",
+            "2026-05-14",
+            "VIP 프로젝트: 중요 고객",
+            "general",
+            glossary_terms=ANY,
+        )
+        generate_mock.assert_called_once_with("정리된 transcript", structure, "VIP 프로젝트: 중요 고객", "general", glossary_terms=ANY)
 
     def test_summarize_transcript_passes_meeting_type_to_extraction(self) -> None:
         """meeting_type은 구조 추출 단계까지 전달됩니다."""
@@ -1131,8 +1196,14 @@ class SummarizeTests(unittest.TestCase):
         ) as generate_mock, patch.object(summarize, "render_output", return_value="최종 출력") as render_mock:
             summarize.summarize_transcript("raw transcript", meeting_type="technical_review")
 
-        extract_mock.assert_called_once_with("[u_0001] Unknown: 정리된 transcript", "2026-05-14", "", "technical_review")
-        generate_mock.assert_called_once_with("정리된 transcript", structure, "", "technical_review")
+        extract_mock.assert_called_once_with(
+            "[u_0001] Unknown: 정리된 transcript",
+            "2026-05-14",
+            "",
+            "technical_review",
+            glossary_terms=ANY,
+        )
+        generate_mock.assert_called_once_with("정리된 transcript", structure, "", "technical_review", glossary_terms=ANY)
         render_mock.assert_called_once_with(structure, "자연어 회의록", "technical_review")
 
     def test_summarize_transcript_defaults_unknown_meeting_type_to_general(self) -> None:
@@ -1149,7 +1220,13 @@ class SummarizeTests(unittest.TestCase):
         ), patch.object(summarize, "render_output", return_value="최종 출력"):
             summarize.summarize_transcript("raw transcript", meeting_type="unknown")
 
-        extract_mock.assert_called_once_with("[u_0001] Unknown: 정리된 transcript", "2026-05-14", "", "general")
+        extract_mock.assert_called_once_with(
+            "[u_0001] Unknown: 정리된 transcript",
+            "2026-05-14",
+            "",
+            "general",
+            glossary_terms=ANY,
+        )
 
     def test_summarize_transcript_rejects_empty_input(self) -> None:
         """빈 transcript는 명확한 에러로 실패합니다."""
@@ -1447,10 +1524,91 @@ class SummarizeTests(unittest.TestCase):
         extraction_prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14", context)
         minutes_prompt = summarize.build_minutes_prompt("회의 내용", empty_track_b_structure(), context)
 
-        self.assertTrue(extraction_prompt.startswith("아래는 이 회의와 관련된 팀 컨텍스트입니다."))
-        self.assertTrue(minutes_prompt.startswith("아래는 이 회의와 관련된 팀 컨텍스트입니다."))
+        self.assertTrue(extraction_prompt.startswith("아래는 이 회의 이해를 돕기 위한 배경 메모입니다."))
+        self.assertTrue(minutes_prompt.startswith("아래는 이 회의 이해를 돕기 위한 배경 메모입니다."))
+        self.assertIn("원문에 없는 결정이나 액션을 새로 만들지는 마세요", extraction_prompt)
+        self.assertIn("원문에 없는 결정이나 액션을 새로 만들지는 마세요", minutes_prompt)
         self.assertIn(context, extraction_prompt)
         self.assertIn(context, minutes_prompt)
+
+    def test_glossary_prompt_prefix_is_hint_only(self) -> None:
+        """용어집 프롬프트는 근거 없는 사실 생성을 금지하는 참고 힌트입니다."""
+        prompt = summarize.build_glossary_prompt_prefix(["Tableau", "BigQuery"])
+
+        self.assertIn("표기와 용어 해석을 돕기 위한 참고 자료", prompt)
+        self.assertIn("결정, 액션, 참석자, 사실, 약속으로 추가하지 마세요", prompt)
+        self.assertIn("원문 근거가 있는 표현", prompt)
+        self.assertIn("- Tableau", prompt)
+        self.assertIn("- BigQuery", prompt)
+        self.assertEqual(summarize.build_glossary_prompt_prefix([]), "")
+        self.assertEqual(summarize.build_glossary_prompt_prefix(None), "")
+
+    def test_glossary_is_inserted_into_extraction_prompt_after_policy(self) -> None:
+        """구조 추출 프롬프트는 회의 유형 정책 뒤 원칙 앞에 용어집을 넣습니다."""
+        prompt = summarize.build_extraction_prompt(
+            "회의 내용",
+            "2026-05-14",
+            meeting_type="technical_review",
+            glossary_terms=["Tableau", "BigQuery"],
+        )
+
+        self.assertIn("- Tableau", prompt)
+        self.assertIn("- BigQuery", prompt)
+        self.assertLess(prompt.index("회의 유형: technical_review"), prompt.index("아래 용어집"))
+        self.assertLess(prompt.index("아래 용어집"), prompt.index("원칙:"))
+
+    def test_glossary_is_inserted_into_minutes_prompt_after_context(self) -> None:
+        """회의록 생성 프롬프트는 컨텍스트 뒤 검증 JSON 지침 앞에 용어집을 넣습니다."""
+        prompt = summarize.build_minutes_prompt(
+            "회의 내용",
+            empty_track_b_structure(),
+            context="홍길동 - 데이터팀장",
+            glossary_terms=["Tableau"],
+        )
+
+        self.assertIn("- Tableau", prompt)
+        self.assertLess(prompt.index("아래는 이 회의 이해를 돕기 위한 배경 메모입니다."), prompt.index("아래 용어집"))
+        self.assertLess(prompt.index("아래 용어집"), prompt.index("아래 JSON은 이미 검증된 사실입니다."))
+
+    def test_empty_glossary_adds_no_prompt_block(self) -> None:
+        """빈 용어집은 구조 추출과 회의록 생성 프롬프트에 블록을 추가하지 않습니다."""
+        extraction_prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14", glossary_terms=[])
+        minutes_prompt = summarize.build_minutes_prompt("회의 내용", empty_track_b_structure(), glossary_terms=[])
+
+        self.assertNotIn("아래 용어집", extraction_prompt)
+        self.assertNotIn("아래 용어집", minutes_prompt)
+
+    def test_summary_glossary_normalizes_dedupes_and_truncates(self) -> None:
+        """요약 용어집은 대소문자 무시 중복 제거와 결정적 truncation을 수행합니다."""
+        terms = [
+            "  BigQuery  ",
+            "bigquery",
+            "Graph   RAG",
+            "",
+            "x" * (summarize.MAX_GLOSSARY_TERM_LENGTH + 1),
+            "Tableau",
+        ]
+
+        self.assertEqual(summarize.normalize_glossary_terms(terms), ["BigQuery", "Graph RAG", "Tableau"])
+        self.assertEqual(summarize.truncate_glossary_terms(terms, max_chars=22, max_terms=10), ["BigQuery"])
+        self.assertEqual(summarize.truncate_glossary_terms(terms, max_chars=1200, max_terms=2), ["BigQuery", "Graph RAG"])
+
+    def test_load_summary_glossary_supports_yaml_terms_and_missing_file(self) -> None:
+        """요약 용어집 로더는 terms YAML과 missing file fallback을 지원합니다."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            glossary_path = Path(temp_dir) / "summary_glossary.yaml"
+            glossary_path.write_text(
+                """
+terms:
+  - BigQuery
+  - bigquery
+  - Graph RAG
+""".strip(),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(summarize.load_summary_glossary(glossary_path), ["BigQuery", "Graph RAG"])
+            self.assertEqual(summarize.load_summary_glossary(Path(temp_dir) / "missing.yaml"), [])
 
     def test_request_structured_structure_uses_json_schema_format(self) -> None:
         """OpenAI 요청이 Structured Output JSON schema 옵션을 사용합니다."""

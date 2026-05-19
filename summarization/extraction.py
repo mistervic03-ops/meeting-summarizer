@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from openai import OpenAI
@@ -12,10 +13,16 @@ from summarization.schemas import MEETING_STRUCTURE_SCHEMA
 from summarization.validation import ensure_structure_shape
 
 
-def extract_structure(transcript: str, meeting_date: str, context: str = "", meeting_type: str = "general") -> dict[str, Any]:
+def extract_structure(
+    transcript: str,
+    meeting_date: str,
+    context: str = "",
+    meeting_type: str = "general",
+    glossary_terms: Sequence[str] | None = None,
+) -> dict[str, Any]:
     """전처리된 전사문에서 구조화된 회의 사실을 추출합니다."""
     client = create_openai_client()
-    prompt = build_extraction_prompt(transcript, meeting_date, context, meeting_type)
+    prompt = build_extraction_prompt(transcript, meeting_date, context, meeting_type, glossary_terms)
     return request_structured_structure(client, prompt)
 
 

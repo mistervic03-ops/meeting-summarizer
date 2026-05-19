@@ -13,7 +13,7 @@ import TranscriptPage from "./TranscriptPage";
 const AUDIO_ACCEPT = "audio/*,.m4a,.mp3,.mp4,.mpeg,.mpga,.wav,.webm";
 const CONTEXT_ACCEPT = ".md,.txt";
 const TRANSCRIPT_ACCEPT = ".txt,.md,text/plain,text/markdown";
-const CONTEXT_HELP_TEXT = "회의명, 프로젝트 용어, 참석자 이름 등을 함께 넣으면\n약어·고유명사·담당자 인식 정확도를 높이는 데 도움이 됩니다.";
+const CONTEXT_HELP_TEXT = "회의 목적, 고객사, 프로젝트명, 주요 용어를 짧게 적어주세요.\n예: A소프트와 향후 협력 방향성 및 후속 액션 논의";
 const CLOUD_MODE_HELP_TEXT = "OpenAI로 음성을 텍스트로 바꿉니다.\n비용이 발생할 수 있어 중요한 회의나 결과 비교가 필요할 때만 사용하세요.";
 type InputMode = "audio" | "text";
 
@@ -70,6 +70,7 @@ const TRANSCRIPTION_MODES: Array<{
 export default function UploadPage() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [contextFile, setContextFile] = useState<File | null>(null);
+  const [contextText, setContextText] = useState("");
   const [inputMode, setInputMode] = useState<InputMode>("audio");
   const [meetingType, setMeetingType] = useState<MeetingType>(DEFAULT_MEETING_TYPE);
   const [sttProvider, setSttProvider] = useState<SttProviderMode>("local_gpu_whisper");
@@ -118,21 +119,16 @@ export default function UploadPage() {
   }, [transcriptFile]);
 
   async function handleStart() {
+    const context = await buildMeetingContext(contextText, contextFile);
+
     if (inputMode === "audio") {
-      startTranscriptionJob({ audioFile, contextFile, meetingType, sttProvider });
+      startTranscriptionJob({ audioFile, context, contextFile: null, meetingType, sttProvider });
       return;
     }
 
     const transcript = transcriptText.trim();
     if (!transcript) {
       return;
-    }
-
-    let context = "";
-    try {
-      context = contextFile ? await contextFile.text() : "";
-    } catch {
-      context = "";
     }
 
     startTranscriptJob({
@@ -155,6 +151,7 @@ export default function UploadPage() {
           resetJobState();
           setAudioFile(null);
           setContextFile(null);
+          setContextText("");
           setMeetingType(DEFAULT_MEETING_TYPE);
           setTranscriptFile(null);
           setTranscriptText("");
@@ -255,16 +252,32 @@ export default function UploadPage() {
                 </section>
               )}
 
-              <FileDropZone
-                accept={CONTEXT_ACCEPT}
-                description="회의명, 프로젝트 용어, 참석자 정보"
-                file={contextFile}
-                helpText={CONTEXT_HELP_TEXT}
-                kind="context"
-                label="참고 자료"
-                optional
-                onFileChange={setContextFile}
-              />
+              <section className="space-y-2">
+                <label className="block">
+                  <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-slate-950">
+                    회의 배경 메모
+                    <Info className="text-slate-400" size={13} strokeWidth={2} />
+                  </span>
+                  <span className="mt-0.5 block whitespace-pre-line text-[11px] leading-4 text-slate-500">{CONTEXT_HELP_TEXT}</span>
+                  <textarea
+                    className="mt-2 min-h-24 w-full resize-y rounded-md border border-slate-300 bg-white p-3 font-sans text-[13px] leading-5 text-slate-800 outline-none transition-colors duration-150 ease-out placeholder:text-slate-400 focus-visible:border-brand-300 focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 disabled:opacity-90 dark:bg-app-field"
+                    disabled={isBusy}
+                    placeholder="예: A소프트와 향후 협력 방향성 및 후속 액션 논의"
+                    value={contextText}
+                    onChange={(event) => setContextText(event.target.value)}
+                  />
+                </label>
+
+                <FileDropZone
+                  accept={CONTEXT_ACCEPT}
+                  description="필요할 때만 txt 또는 md 파일을 추가하세요."
+                  file={contextFile}
+                  kind="context"
+                  label="추가 참고 파일"
+                  optional
+                  onFileChange={setContextFile}
+                />
+              </section>
             </section>
 
             <section className="space-y-3">
@@ -416,8 +429,8 @@ export default function UploadPage() {
                 </div>
                 <div className="flex items-center justify-between gap-4 py-1.5">
                   <dt className="text-slate-500">참고 자료</dt>
-                  <dd className={contextFile ? "font-medium text-slate-950" : "font-medium text-slate-400"}>
-                    {contextFile ? "선택됨" : "선택"}
+                  <dd className={contextText.trim() || contextFile ? "font-medium text-slate-950" : "font-medium text-slate-400"}>
+                    {contextText.trim() || contextFile ? "입력됨" : "선택"}
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-4 py-1.5">
@@ -439,4 +452,32 @@ export default function UploadPage() {
       </div>
     </main>
   );
+}
+
+async function buildMeetingContext(contextText: string, contextFile: File | null): Promise<string> {
+  const typedContext = contextText.trim();
+  const fileContext = await readOptionalContextFile(contextFile);
+  const sections: string[] = [];
+
+  if (typedContext) {
+    sections.push(`회의 배경 메모:\n${typedContext}`);
+  }
+  if (fileContext) {
+    const filename = contextFile?.name ? ` (${contextFile.name})` : "";
+    sections.push(`추가 참고 파일${filename}:\n${fileContext}`);
+  }
+
+  return sections.join("\n\n").trim();
+}
+
+async function readOptionalContextFile(contextFile: File | null): Promise<string> {
+  if (!contextFile) {
+    return "";
+  }
+
+  try {
+    return (await contextFile.text()).trim();
+  } catch {
+    return "";
+  }
 }

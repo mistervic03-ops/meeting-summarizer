@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from summarization.policies import MEETING_TYPE_POLICIES, MEETING_TYPES, build_policy_prompt_guidance, normalize_meeting_type
@@ -27,10 +28,17 @@ def build_meeting_type_policy(meeting_type: str | None = None) -> str:
     return build_policy_prompt_guidance(meeting_type)
 
 
-def build_extraction_prompt(transcript: str, meeting_date: str, context: str = "", meeting_type: str = "general") -> str:
+def build_extraction_prompt(
+    transcript: str,
+    meeting_date: str,
+    context: str = "",
+    meeting_type: str = "general",
+    glossary_terms: Sequence[str] | None = None,
+) -> str:
     """사실성 및 경고 규칙을 포함한 구조화 추출 프롬프트를 만듭니다."""
     context_prefix = build_context_prompt_prefix(context)
     meeting_type_policy = build_meeting_type_policy(meeting_type)
+    glossary_prefix = build_glossary_prompt_prefix(glossary_terms)
     return f"""
 {context_prefix}
 
@@ -41,6 +49,8 @@ def build_extraction_prompt(transcript: str, meeting_date: str, context: str = "
 회의 날짜는 상대 기한을 표준화할 때의 기준점입니다.
 
 {meeting_type_policy}
+
+{glossary_prefix}
 
 원칙:
 - 사실만 추출하고 추정하지 마세요.
@@ -108,13 +118,22 @@ def build_extraction_prompt(transcript: str, meeting_date: str, context: str = "
 """.strip()
 
 
-def build_minutes_prompt(preprocessed_text: str, structure: dict[str, Any], context: str = "", meeting_type: str = "general") -> str:
+def build_minutes_prompt(
+    preprocessed_text: str,
+    structure: dict[str, Any],
+    context: str = "",
+    meeting_type: str = "general",
+    glossary_terms: Sequence[str] | None = None,
+) -> str:
     """자연스러운 한국어 회의록 생성을 위한 프롬프트를 만듭니다."""
     verified_json = json.dumps(structure, ensure_ascii=False, indent=2)
     context_prefix = build_context_prompt_prefix(context)
+    glossary_prefix = build_glossary_prompt_prefix(glossary_terms)
     minutes_focus = build_minutes_focus_guidance(meeting_type)
     return f"""
 {context_prefix}
+
+{glossary_prefix}
 
 아래 JSON은 이미 검증된 사실입니다.
 회의록 작성 시 반드시 이 JSON을 기준으로 하고,
@@ -164,7 +183,25 @@ def build_context_prompt_prefix(context: str) -> str:
         return ""
 
     return f"""
-아래는 이 회의와 관련된 팀 컨텍스트입니다.
-용어, 이름, 프로젝트명 해석 시 반드시 참고하세요:
+아래는 이 회의 이해를 돕기 위한 배경 메모입니다.
+용어, 이름, 프로젝트명, 회의 목적을 해석할 때 참고하되,
+원문에 없는 결정이나 액션을 새로 만들지는 마세요:
 {cleaned_context}
+""".strip()
+
+
+def build_glossary_prompt_prefix(terms: Sequence[str] | None) -> str:
+    """요약 단계에서만 사용할 용어집 힌트 블록을 만듭니다."""
+    if not terms:
+        return ""
+
+    term_lines = "\n".join(f"- {term}" for term in terms if term)
+    if not term_lines:
+        return ""
+
+    return f"""
+아래 용어집은 표기와 용어 해석을 돕기 위한 참고 자료입니다.
+용어집의 항목을 원문이나 검증된 JSON에 없는 결정, 액션, 참석자, 사실, 약속으로 추가하지 마세요.
+원문 근거가 있는 표현을 더 정확히 이해하거나 표기할 때만 사용하세요:
+{term_lines}
 """.strip()

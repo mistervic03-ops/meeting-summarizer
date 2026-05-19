@@ -40,6 +40,15 @@ from summarization.openai_utils import (
     get_structure_model,
     get_summary_model,
 )
+from summarization.glossary import (
+    DEFAULT_SUMMARY_GLOSSARY_PATH,
+    MAX_GLOSSARY_TERM_LENGTH,
+    get_summary_glossary_terms,
+    load_summary_glossary,
+    normalize_glossary_terms,
+    parse_summary_glossary_terms,
+    truncate_glossary_terms,
+)
 from summarization.policies import (
     ExtractionPolicy,
     PolicyApplicationResult,
@@ -63,6 +72,7 @@ from summarization.prompts import (
     MEETING_TYPE_POLICIES,
     MEETING_TYPES,
     STRUCTURE_SYSTEM_PROMPT,
+    build_glossary_prompt_prefix,
     build_meeting_type_policy,
     build_context_prompt_prefix,
     build_extraction_prompt,

@@ -5,12 +5,14 @@ from __future__ import annotations
 import logging
 import sys
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from openai import OpenAI
 
 from summarization.chunk_pipeline import extract_structure_by_chunks
 from summarization.extraction import extract_structure
+from summarization.glossary import get_summary_glossary_terms
 from summarization.models import CHUNK_STRATEGY, DEEP_STRATEGY, NormalizedTranscript, PreprocessedTranscript, SummaryResult
 from summarization.normalization import extract_meeting_date, normalize_transcript, preprocess_transcript
 from summarization.openai_utils import create_openai_client, extract_response_text, get_summary_model
@@ -52,6 +54,7 @@ def summarize_transcript(
 
         total_started_at = time.perf_counter()
         run_stage = resolve_compat_name("run_timed_stage", run_timed_stage)
+        glossary_terms = resolve_compat_name("get_summary_glossary_terms", get_summary_glossary_terms)()
 
         if normalized_transcript is None:
             preprocessed, elapsed = run_stage(
@@ -85,6 +88,7 @@ def summarize_transcript(
                 preprocessed.meeting_date,
                 context,
                 meeting_type=resolved_meeting_type,
+                glossary_terms=glossary_terms,
             )
         else:
             logger.info("summarize_transcript using direct extraction path")
@@ -95,6 +99,7 @@ def summarize_transcript(
                 preprocessed.meeting_date,
                 context,
                 resolved_meeting_type,
+                glossary_terms=glossary_terms,
             )
         logger.info("extract_structure completed in %.3fs", elapsed)
 
@@ -122,6 +127,7 @@ def summarize_transcript(
             structure,
             context,
             resolved_meeting_type,
+            glossary_terms=glossary_terms,
         )
         logger.info("generate_minutes completed in %.3fs", elapsed)
 
@@ -153,11 +159,18 @@ def generate_minutes(
     structure: dict[str, Any],
     context: str = "",
     meeting_type: str = "general",
+    glossary_terms: Sequence[str] | None = None,
 ) -> str:
     """정리된 전사문과 검증된 JSON으로 자연스러운 한국어 회의록을 생성합니다."""
     client = resolve_compat_name("create_openai_client", create_openai_client)()
     transcript_text = preprocessed_text.text if isinstance(preprocessed_text, PreprocessedTranscript) else preprocessed_text
-    prompt = resolve_compat_name("build_minutes_prompt", build_minutes_prompt)(transcript_text, structure, context, meeting_type)
+    prompt = resolve_compat_name("build_minutes_prompt", build_minutes_prompt)(
+        transcript_text,
+        structure,
+        context,
+        meeting_type,
+        glossary_terms,
+    )
     return resolve_compat_name("request_minutes_generation", request_minutes_generation)(client, prompt)
 
 

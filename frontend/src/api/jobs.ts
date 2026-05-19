@@ -47,6 +47,7 @@ export async function createJob(payload: CreateJobPayload): Promise<CreateJobRes
   const formData = new FormData();
   formData.append("audio_file", payload.audioFile);
   formData.append("meeting_type", payload.meetingType ?? "execution");
+  formData.append("context", payload.context ?? "");
 
   if (payload.contextFile) {
     formData.append("context_file", payload.contextFile);
@@ -67,6 +68,7 @@ export async function createTranscriptionJob(payload: CreateTranscriptionJobPayl
   formData.append("transcription_mode", payload.transcriptionMode ?? "plain");
   formData.append("stt_provider", payload.sttProvider ?? "local_gpu_whisper");
   formData.append("meeting_type", payload.meetingType ?? "execution");
+  formData.append("context", payload.context ?? "");
 
   if (payload.contextFile) {
     formData.append("context_file", payload.contextFile);
