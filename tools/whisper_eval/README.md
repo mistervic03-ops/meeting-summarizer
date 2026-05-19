@@ -1,130 +1,94 @@
-# faster-whisper GPU Evaluation
+# Whisper GPU Evaluation
 
-이 디렉터리는 Meeting Summarizer 앱 런타임과 분리된 GPU STT 평가용 도구입니다.
-프로덕션 provider, frontend, summarization, Docker Compose 설정을 변경하지 않고
-단일 오디오 파일에 대해 faster-whisper 전사 결과와 timing을 확인합니다.
+이 디렉터리는 Meeting Summarizer production flow와 분리된 STT 품질 평가 도구입니다. backend, frontend, Docker Compose, provider 설정을 변경하지 않고 단일 오디오 파일의 전사 품질과 실행 시간을 확인합니다.
 
-## 목표
+## 평가 목표
 
-- Korean meeting audio에서 로컬 faster-whisper 품질을 OpenAI STT baseline과 비교합니다.
-- `distil-large-v3`가 내부 회의 전사에 충분한지 먼저 확인합니다.
-- GPU 실행 시 model load time, transcription time, realtime factor를 확인합니다.
-- 결과 transcript를 저장해 사람이 OpenAI 결과와 직접 비교할 수 있게 합니다.
+- OpenAI STT baseline과 local GPU Whisper transcript의 semantic fidelity를 비교합니다.
+- production integration이 아니라 품질 판단을 위한 실험입니다.
+- downstream summarization에 유용한 transcript인지 확인합니다.
 
-## 사용법
+주요 평가 기준:
 
-프로젝트 루트에서 실행합니다.
+- 한국어 비즈니스 용어 fidelity
+- 날짜와 숫자 정확도
+- action item fidelity
+- hallucination rate
+- downstream summarization 입력으로서의 유용성
 
-```bash
-python3 tools/whisper_eval/evaluate_whisper.py /path/to/meeting_audio.wav
-```
+## 현재 결론
 
-기본값은 GPU 평가 대상에 맞춰져 있습니다.
+검증된 production baseline:
 
-```text
-model=distil-large-v3
-device=cuda
-compute_type=float16
-language=ko
-```
+- `STT_PROVIDER=openai`
+- OpenAI STT는 현재 안정 운영 경로입니다.
 
-CLI 인자로 덮어쓸 수 있습니다.
+CPU local Whisper:
 
-```bash
-python3 tools/whisper_eval/evaluate_whisper.py /path/to/meeting_audio.wav \
-  --model large-v3 \
-  --device cuda \
-  --compute-type float16 \
-  --language ko
-```
+- 기능적으로 동작합니다.
+- production 회의 전사 품질에는 부족했습니다.
+- 관찰된 문제는 한국어 비즈니스 용어 왜곡, entity fidelity 부족, downstream semantic extraction 품질 저하 가능성입니다.
 
-환경 변수로도 설정할 수 있습니다.
+faster-whisper/CTranslate2 GPU:
 
-```bash
-WHISPER_EVAL_MODEL=distil-large-v3 \
-WHISPER_EVAL_DEVICE=cuda \
-WHISPER_EVAL_COMPUTE_TYPE=float16 \
-WHISPER_EVAL_LANGUAGE=ko \
-python3 tools/whisper_eval/evaluate_whisper.py /path/to/meeting_audio.wav
-```
+- 기존 harness는 유지합니다.
+- Spark 서버가 `linux/arm64/v8`이므로 generic Docker Hub CUDA 이미지와 CTranslate2 wheel 조합이 안정적이지 않았습니다.
+- `ctranslate2 4.7.1`, `ctranslate2 4.5.0`에서 모두 CUDA passthrough는 보이지만 `ctranslate2.get_cuda_device_count() == 0`이었습니다.
+- 이 경로는 ARM64 CUDA packaging/build compatibility 계획을 세운 뒤 다시 조사합니다.
+- 무작위 CTranslate2 wheel pinning은 중단합니다.
 
-Transcript는 기본적으로 다음 위치에 저장됩니다.
+현재 검증된 GPU 평가 경로:
 
-```text
-tools/whisper_eval/outputs/<audio>_<model>_<device>_<timestamp>.txt
-```
+- NVIDIA NGC PyTorch container
+- `nvcr.io/nvidia/pytorch:25.11-py3`
+- Spark/GB10에서 `torch.cuda.is_available() == True`
+- `torch.cuda.device_count() == 1`
+- GPU 이름: `NVIDIA GB10`
+- PyTorch Transformers Whisper `openai/whisper-large-v3` GPU inference 진입 성공
+- 69초 오디오가 long-form timestamp 설정 후 약 15.9초에 전사됨
 
-저장 위치를 바꾸려면 `--output-dir` 또는 `--output-file`을 사용합니다.
+## 파일 구성
 
-## GPU Docker 실행
+- `evaluate_whisper.py`: faster-whisper/CTranslate2 평가 harness
+- `Dockerfile.gpu`: faster-whisper/CTranslate2 평가 이미지
+- `evaluate_transformers_whisper.py`: PyTorch Transformers Whisper 평가 harness
+- `Dockerfile.transformers-gpu`: generic PyTorch Docker Hub 기반 실험 이미지
+- `outputs/`: transcript 출력 디렉터리
 
-이 Dockerfile은 평가 도구 전용입니다. 프로덕션 `docker-compose.yml`, backend,
-frontend runtime과 연결하지 않습니다.
+현재 Spark/GB10에서는 NGC PyTorch container를 우선 사용합니다.
 
-프로젝트 루트에서 이미지를 빌드합니다.
+## NGC PyTorch 평가 환경
+
+프로젝트 루트에서 NGC PyTorch container에 들어갑니다.
 
 ```bash
-docker build -f tools/whisper_eval/Dockerfile.gpu -t whisper-eval-gpu .
-```
-
-CUDA/CTranslate2 preflight를 먼저 확인합니다.
-
-```bash
-docker run --rm --gpus all whisper-eval-gpu --help
-
-docker run --rm --gpus all --entrypoint python3 whisper-eval-gpu \
-  -c "import ctranslate2; print(ctranslate2.version); print(ctranslate2.get_cuda_device_count())"
-```
-
-오디오 파일을 전사합니다.
-
-```bash
-docker run --rm --gpus all \
-  -v "$PWD/test-audio.m4a:/audio/test-audio.m4a:ro" \
-  -v "$PWD/tools/whisper_eval/outputs:/outputs" \
+docker run --rm --gpus all -it --ipc=host \
   -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
-  whisper-eval-gpu /audio/test-audio.m4a --output-dir /outputs
+  -v "${PWD}:/workspace" \
+  -w /workspace \
+  nvcr.io/nvidia/pytorch:25.11-py3
 ```
 
-## Transformers Whisper GPU 실행
-
-Spark 서버는 `linux/arm64/v8` 환경입니다. Docker GPU passthrough와 CUDA 컨테이너의
-`nvidia-smi`는 정상 동작하지만, ARM64에서 CTranslate2 CUDA wheel 생태계가 아직
-불안정해 `ctranslate2.get_cuda_device_count()`가 0으로 남는 상황이 있었습니다.
-이 경로는 faster-whisper 평가 harness를 제거하지 않고, PyTorch CUDA 기반
-Transformers Whisper로 로컬 GPU STT 품질을 먼저 확인하기 위한 별도 평가 도구입니다.
-
-프로젝트 루트에서 이미지를 빌드합니다.
+container 안에서 Torch CUDA preflight를 확인합니다.
 
 ```bash
-docker build -f tools/whisper_eval/Dockerfile.transformers-gpu -t transformers-whisper-gpu .
+python -c "import torch; print(torch.version); print(torch.cuda.is_available()); print(torch.cuda.device_count()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no cuda')"
 ```
 
-Torch CUDA preflight를 확인합니다.
+필요한 최소 dependency를 설치합니다.
 
 ```bash
-docker run --rm --gpus all --entrypoint python3 transformers-whisper-gpu \
-  -c "import torch; print(torch.version); print(torch.cuda.is_available()); print(torch.cuda.device_count())"
+apt-get update && apt-get install -y ffmpeg
+pip install transformers accelerate sentencepiece
 ```
 
-GPU 이름까지 확인하려면 다음 명령을 사용합니다.
+오디오를 전사합니다.
 
 ```bash
-docker run --rm --gpus all --entrypoint python3 transformers-whisper-gpu \
-  -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'none')"
+python tools/whisper_eval/evaluate_transformers_whisper.py test-audio.wav
 ```
 
-오디오 파일을 전사합니다.
-
-```bash
-docker run --rm --gpus all \
-  -v "$PWD/test-audio.m4a:/audio/test-audio.m4a:ro" \
-  -v "$PWD/tools/whisper_eval/outputs:/outputs" \
-  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
-  transformers-whisper-gpu /audio/test-audio.m4a --output-dir /outputs
-```
-
-기본값은 다음과 같습니다.
+기본값:
 
 ```text
 model=openai/whisper-large-v3
@@ -132,87 +96,134 @@ device=cuda
 torch_dtype=float16
 language=ko
 task=transcribe
+return_timestamps=true
 ```
 
-모델이나 dtype을 바꿔 비교할 수 있습니다.
+모델을 바꿔 비교합니다.
+
+```bash
+python tools/whisper_eval/evaluate_transformers_whisper.py test-audio.wav \
+  --model openai/whisper-large-v3-turbo \
+  --output-dir tools/whisper_eval/outputs
+```
+
+```bash
+python tools/whisper_eval/evaluate_transformers_whisper.py test-audio.wav \
+  --model distil-whisper/distil-large-v3 \
+  --output-dir tools/whisper_eval/outputs
+```
+
+## Long-Form Audio
+
+Transformers Whisper는 30초를 넘는 long-form audio에서 timestamp chunk 반환이 필요할 수 있습니다.
+
+`evaluate_transformers_whisper.py`는 기본적으로 다음 설정을 사용합니다.
+
+```text
+--return-timestamps
+```
+
+필요할 때만 짧은 smoke test에서 끕니다.
+
+```bash
+python tools/whisper_eval/evaluate_transformers_whisper.py test-audio.wav --no-return-timestamps
+```
+
+## Audio Decode Notes
+
+`m4a` decoding에는 container 안의 `ffmpeg`가 필요할 수 있습니다. `m4a` parsing이 실패하면 `wav`로 변환해서 평가합니다.
+
+```bash
+ffmpeg -i input.m4a input.wav
+python tools/whisper_eval/evaluate_transformers_whisper.py input.wav
+```
+
+## Transformers Dockerfile
+
+`Dockerfile.transformers-gpu`는 generic PyTorch Docker Hub 기반 실험 이미지입니다. Spark/GB10에서는 NGC image가 검증된 경로이므로 먼저 NGC container를 사용합니다.
+
+빌드:
+
+```bash
+docker build -f tools/whisper_eval/Dockerfile.transformers-gpu -t transformers-whisper-gpu .
+```
+
+Torch CUDA preflight:
+
+```bash
+docker run --rm --gpus all --entrypoint python3 transformers-whisper-gpu \
+  -c "import torch; print(torch.version); print(torch.cuda.is_available()); print(torch.cuda.device_count())"
+```
+
+실행:
 
 ```bash
 docker run --rm --gpus all \
-  -v "$PWD/test-audio.m4a:/audio/test-audio.m4a:ro" \
+  -v "$PWD/test-audio.wav:/audio/test-audio.wav:ro" \
   -v "$PWD/tools/whisper_eval/outputs:/outputs" \
   -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
-  transformers-whisper-gpu /audio/test-audio.m4a \
-    --model openai/whisper-large-v3 \
-    --torch-dtype float16 \
-    --language ko \
-    --output-dir /outputs
+  transformers-whisper-gpu /audio/test-audio.wav --output-dir /outputs
 ```
 
-## 권장 모델
+## faster-whisper Harness
 
-- `distil-large-v3`: 첫 GPU 품질/속도 평가 기본값입니다.
-- `large-v3`: 품질 상한선을 확인할 때 사용합니다. 더 느리고 메모리를 더 씁니다.
-- `medium`: GPU packaging이 불안정할 때 비교용으로 가볍게 확인합니다.
-- `small`: smoke test나 CPU fallback 확인용입니다.
+기존 faster-whisper harness는 남겨둡니다. 이 경로는 ARM64 CUDA packaging/build compatibility 조사가 끝난 뒤 다시 평가합니다.
 
-## 출력 지표
-
-- `audio_duration_seconds`: 가능한 경우 pydub/ffmpeg 또는 wav metadata로 계산합니다.
-- `model_load_seconds`: faster-whisper model load 시간입니다.
-- `transcription_seconds`: segment iterator를 모두 소비해 transcript를 만든 시간입니다.
-- `realtime_factor`: `transcription_seconds / audio_duration_seconds`입니다.
-- `output_path`: 저장된 transcript 파일입니다.
-
-## GPU 요구 사항
-
-- NVIDIA GPU와 CUDA runtime이 서버에서 동작해야 합니다.
-- `faster-whisper`와 그 하위 dependency인 CTranslate2가 CUDA 실행을 지원해야 합니다.
-- `device=cuda`, `compute_type=float16` 조합이 실패하면 CUDA/CTranslate2 wheel 호환성을 먼저 확인합니다.
-
-## 문제 해결
-
-이 평가 이미지는 CUDA 12.4 + cuDNN 9 runtime 위에서 CTranslate2 GPU wheel을 쓰도록
-`ctranslate2==4.5.0`을 먼저 설치한 뒤 `faster-whisper==1.1.1`을 설치합니다. `pip install
-faster-whisper`가 고르는 transitive CTranslate2 버전에 의존하지 않기 위한 pin입니다.
-
-`ctranslate2.get_cuda_device_count()`가 `0`이면 먼저 Docker GPU passthrough를 확인합니다.
+로컬 실행:
 
 ```bash
-docker run --rm --gpus all nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 nvidia-smi
+python3 tools/whisper_eval/evaluate_whisper.py /path/to/meeting_audio.wav
 ```
 
-위 명령은 GPU를 보는데 preflight만 `0`이면 CUDA runtime과 CTranslate2 wheel 조합 문제일
-가능성이 큽니다. 이미지를 다시 빌드하고 pin이 반영됐는지 확인합니다.
+Docker build:
 
 ```bash
-docker build --no-cache -f tools/whisper_eval/Dockerfile.gpu -t whisper-eval-gpu .
+docker build -f tools/whisper_eval/Dockerfile.gpu -t whisper-eval-gpu .
+```
 
+CTranslate2 preflight:
+
+```bash
 docker run --rm --gpus all --entrypoint python3 whisper-eval-gpu \
   -c "import ctranslate2; print(ctranslate2.version); print(ctranslate2.get_cuda_device_count())"
 ```
 
-CUDA wheel mismatch가 계속되면 `tools/whisper_eval/Dockerfile.gpu`의
-`CTRANSLATE2_VERSION`만 바꿔 비교합니다. CUDA 12 + cuDNN 9 계열은 `4.5.x` 이상이
-대상이고, CUDA 12 + cuDNN 8 환경은 `4.4.0`으로 낮추는 우회가 알려져 있습니다.
+Spark ARM64에서 이 값이 0이면 Docker GPU passthrough와는 별개로 CTranslate2 CUDA runtime/wheel 문제일 가능성이 큽니다.
 
-GPU 경로가 막혀도 스크립트 자체와 오디오 decode를 확인하려면 CPU sanity check를 실행합니다.
+## 출력
 
-```bash
-docker run --rm \
-  -v "$PWD/test-audio.m4a:/audio/test-audio.m4a:ro" \
-  -v "$PWD/tools/whisper_eval/outputs:/outputs" \
-  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
-  whisper-eval-gpu /audio/test-audio.m4a \
-    --device cpu \
-    --compute-type int8 \
-    --model small \
-    --output-dir /outputs
-```
+각 eval script는 다음을 출력합니다.
+
+- model/device/dtype
+- CUDA availability
+- GPU 이름
+- model load time
+- transcription duration
+- transcript
+- 저장된 output path
+
+Transcript는 기본적으로 `tools/whisper_eval/outputs/` 아래에 저장됩니다.
+
+## Next Session Checklist
+
+- production STT는 계속 OpenAI로 유지합니다.
+- GPU 품질 비교는 NGC PyTorch container에서 계속합니다.
+- 비교 대상:
+  - OpenAI baseline
+  - Whisper `openai/whisper-large-v3` GPU
+  - Whisper `openai/whisper-large-v3-turbo`, 사용 가능하면
+  - `distil-whisper/distil-large-v3`, 사용 가능하면
+- 평가 기준:
+  - 한국어 비즈니스 용어 fidelity
+  - 날짜와 숫자 정확도
+  - action item fidelity
+  - hallucination rate
+  - downstream summarization 입력으로서의 유용성
 
 ## Caveats
 
-- 이 도구는 품질 평가 harness일 뿐이며 프로덕션 STT flow에 연결되어 있지 않습니다.
-- diarization, batching, streaming, retry, chunk orchestration은 다루지 않습니다.
-- 첫 실행은 모델 다운로드 때문에 오래 걸릴 수 있습니다.
-- 긴 회의 오디오는 단일 파일 전사로 평가하므로, 실제 앱의 chunked OpenAI path와 성능 특성이 다를 수 있습니다.
-- 품질 판단은 저장된 transcript를 OpenAI baseline output과 나란히 비교해 진행합니다.
+- 이 디렉터리는 evaluation-only입니다.
+- production backend/frontend/docker-compose/provider code와 연결하지 않습니다.
+- diarization, batching, streaming, retry, production chunk orchestration은 평가 범위 밖입니다.
+- 첫 실행은 HuggingFace model download 때문에 오래 걸릴 수 있습니다.
+- HuggingFace cache는 `large-v3` 재평가에 유용하므로 당분간 유지합니다.

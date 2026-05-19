@@ -13,7 +13,7 @@ import TranscriptPage from "./TranscriptPage";
 const AUDIO_ACCEPT = "audio/*,.m4a,.mp3,.mp4,.mpeg,.mpga,.wav,.webm";
 const CONTEXT_ACCEPT = ".md,.txt";
 const CONTEXT_HELP_TEXT = "회의명, 프로젝트 용어, 참석자 이름 등을 함께 넣으면\n약어·고유명사·담당자 인식 정확도를 높이는 데 도움이 됩니다.";
-const SPEAKER_MODE_HELP_TEXT = "회의 참석자가 여러 명일 때 추천됩니다.\n발화자와 액션 아이템 담당자를 더 정확하게 구분할 수 있습니다.";
+const SPEAKER_MODE_HELP_TEXT = "실험적 고급 모드입니다.\n화자별 발화를 따로 검토해야 할 때만 사용하세요.";
 const TRANSCRIPTION_PROGRESS_STEPS = [
   { label: "파일 준비", progress: 10 },
   { label: "내용 정리", progress: 95 },
@@ -26,13 +26,13 @@ const TRANSCRIPTION_MODES: Array<{
   mode: TranscriptionMode;
 }> = [
   {
-    description: "화자 구분 없이 회의 내용을 준비합니다.",
+    description: "회의 의미와 후속 작업 중심으로 준비합니다.",
     label: "기본",
     mode: "plain"
   },
   {
-    description: "화자를 구분해 담당자 정리를 돕습니다.",
-    label: "화자 구분",
+    description: "화자 구분이 필요한 경우에만 사용합니다.",
+    label: "화자 구분 실험",
     mode: "diarized"
   }
 ];
@@ -255,7 +255,7 @@ export default function UploadPage() {
                 <div className="flex items-center justify-between gap-4 py-1.5">
                   <dt className="text-slate-500">처리 방식</dt>
                   <dd className="break-words text-right font-medium text-slate-950">
-                    {transcriptionMode === "plain" ? "기본" : "화자 구분"}
+                    {transcriptionMode === "plain" ? "기본" : "화자 구분 실험"}
                   </dd>
                 </div>
               </dl>

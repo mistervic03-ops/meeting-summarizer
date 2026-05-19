@@ -32,6 +32,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--language", default=os.getenv("TRANSFORMERS_WHISPER_LANGUAGE", DEFAULT_LANGUAGE))
     parser.add_argument("--task", default=os.getenv("TRANSFORMERS_WHISPER_TASK", DEFAULT_TASK))
     parser.add_argument(
+        "--return-timestamps",
+        action=argparse.BooleanOptionalAction,
+        default=os.getenv("TRANSFORMERS_WHISPER_RETURN_TIMESTAMPS", "true").strip().lower() not in {"0", "false", "no"},
+        help="긴 오디오 전사를 위해 timestamp chunk 반환을 켭니다.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path(os.getenv("TRANSFORMERS_WHISPER_OUTPUT_DIR", Path(__file__).resolve().parent / "outputs")),
@@ -116,6 +122,7 @@ def main() -> int:
     print(f"torch_dtype={args.torch_dtype}")
     print(f"language={args.language}")
     print(f"task={args.task}")
+    print(f"return_timestamps={args.return_timestamps}")
     print(f"torch_version={torch.__version__}")
     print(f"torch_cuda_version={torch.version.cuda}")
     print(f"torch_cuda_available={cuda_available}")
@@ -132,7 +139,11 @@ def main() -> int:
     model_load_seconds = time.perf_counter() - model_load_started_at
 
     transcription_started_at = time.perf_counter()
-    result = transcriber(str(audio_file), generate_kwargs={"language": args.language, "task": args.task})
+    result = transcriber(
+        str(audio_file),
+        return_timestamps=args.return_timestamps,
+        generate_kwargs={"language": args.language, "task": args.task},
+    )
     transcription_seconds = time.perf_counter() - transcription_started_at
     transcript = str(result.get("text", "")).strip()
 
