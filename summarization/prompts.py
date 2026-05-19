@@ -63,7 +63,12 @@ def build_extraction_prompt(
 - 예: "오늘 중", "오늘 오후 6시", "내일 오전", "월요일 오후 4시", "다음주 월요일 오전", "금요일 오후 3시"
 - 스키마에 없는 필드는 생성하지 마세요.
 - summary_facts에는 회의 요약에 쓸 핵심 사실만 짧게 넣으세요.
+- 중요한 논의 방향, 고객 관심사, 기술 설명, 우려사항, 열린 질문, 후속 후보는 확정 여부가 불명확하면 summary_facts나 speaker_highlights에 보존하세요.
+- 목표는 사람이 검토하고 판단하기 쉽게 논의 구조를 정리하는 것입니다. 중요한 내용이라도 확정 여부가 불명확하면 확정 task/decision으로 과도하게 구조화하지 마세요.
 - decisions에는 명확한 결정과 미확정 논의를 구분해 넣으세요.
+- 확정된 결정과 논의된 방향성을 구분하세요.
+- decisions에는 명시적 합의, 승인, 결정 표현이 있는 확정 결정 또는 transcript가 결정 후보로 명확히 다룬 미확정 decision candidate만 넣으세요.
+- 명시적 합의/승인/결정 표현이 없는 기술 방향, 제품 설명, 협력 가능성, 고객 관심사, 기술적 가능성, 전략/비전 발언, 계속 탐색하자는 일반 공감대는 decisions에 넣지 말고 summary_facts나 speaker_highlights에 보존하세요.
 - decisions의 decision은 회의록에 바로 표시 가능한 자연스러운 한국어 결정사항으로 작성하세요.
 - decisions의 decision에 원문 발화를 그대로 복사하지 마세요.
 - 내부 구현 표현처럼 보이는 merge, schema, validation은 실제 회의 결정이면 자연스러운 업무 표현으로 정리하세요.
@@ -80,6 +85,8 @@ def build_extraction_prompt(
 - "~하기로 했다", "~담당", "~까지 완료" 표현은 action_item 후보로 잡으세요.
 - 긴 회의에서는 action_items가 많을 수 있습니다. 10개 내외로 줄이지 말고 명시적 action은 가능한 모두 추출하세요.
 - 명시적 action 패턴은 반드시 후보로 검토하세요: "제가 ~ 하겠습니다", "제가 하고 있습니다", "제가 할게요", "저희가 하겠습니다", "님이 ~까지 해주세요", "님 ~까지입니다", "공유해 주세요", "반영해 주세요", "작성하겠습니다", "확인하겠습니다", "~ 추가하겠습니다".
+- action_items는 명시적 요청, 실행 약속, 담당 지정, 기한, 구체적인 다음 단계 합의처럼 transcript 근거가 있을 때만 추출하세요.
+- 약한 관심 표현, 탐색적 후속 논의, 제품 사용 사례, 아키텍처 논의, 넓은 협업 가능성, "검토해보자/고려해보자" 수준의 발언은 명확한 담당/요청/약속 근거가 없으면 action_item으로 단정하지 말고 논의 포인트나 follow-up 후보로 summary_facts 또는 speaker_highlights에 남기세요.
 - 담당자와 기한이 모두 있는 작업은 특히 누락하지 마세요.
 - closing recap이나 중간 정리에서 다시 언급된 항목은 누락 보완 신호로만 사용하고, 같은 action을 중복 생성하지 마세요.
 - 같은 담당자/대상/기한의 반복 언급은 하나의 action_item으로 합치고 source_quote는 가장 직접적인 원문 발화를 쓰세요.
@@ -103,7 +110,7 @@ def build_extraction_prompt(
 - 내부 구현 표현처럼 보이는 merge, schema, validation도 실제 회의 업무라면 자연스러운 한국어 업무명으로 정리하세요.
 - 예: "발표자료 준비", "데모용 계정 생성", "DWH 적재 로그 확인", "고객사 PoC 일정 공유", "API 응답 오류 재현"
 - 원문 근거가 없으면 사실을 만들지 말고 source_quote는 "미정"이 아니라 빈 문자열로 두거나 warnings에 추가하세요.
-- 애매하지만 중요할 수 있는 action item이나 decision은 삭제하지 말고 confidence를 low로 두고 warnings에 추가하세요.
+- action_item이나 decision 후보로 볼 명시적 근거가 있지만 애매한 항목은 삭제하지 말고 confidence를 low로 두고 warnings에 추가하세요.
 - owner가 실제로 "미정"일 때만 담당자 확인 warning을 추가하세요.
 - confidence가 low인 항목은 warnings에 추가하세요.
 - 기한이 없거나 불명확하면 due_date는 "미정"으로 두고 warnings에 추가하세요.
