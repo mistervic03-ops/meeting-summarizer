@@ -198,13 +198,13 @@ def build_generate_kwargs(config: LocalGpuWhisperConfig, transcriber: Any) -> di
         "language": config.language,
         "task": config.task,
     }
-    prompt_ids = build_whisper_prompt_ids(transcriber)
+    prompt_ids = build_whisper_prompt_ids(transcriber, config)
     if prompt_ids is not None:
         generate_kwargs["prompt_ids"] = prompt_ids
     return generate_kwargs
 
 
-def build_whisper_prompt_ids(transcriber: Any) -> Any | None:
+def build_whisper_prompt_ids(transcriber: Any, config: LocalGpuWhisperConfig) -> Any | None:
     """pipeline tokenizer가 지원할 때만 initial prompt token을 생성합니다."""
     tokenizer = getattr(transcriber, "tokenizer", None)
     if tokenizer is None or not hasattr(tokenizer, "get_prompt_ids"):
@@ -215,7 +215,8 @@ def build_whisper_prompt_ids(transcriber: Any) -> Any | None:
         return None
 
     try:
-        prompt_ids = normalize_prompt_ids_for_transformers(tokenizer.get_prompt_ids(prompt))
+        target_device = resolve_prompt_ids_device(transcriber, config)
+        prompt_ids = normalize_prompt_ids_for_transformers(tokenizer.get_prompt_ids(prompt), target_device)
     except Exception as exc:
         logger.warning("local_gpu_whisper_prompt_ids_failed error=%s", exc)
         return None
@@ -224,7 +225,34 @@ def build_whisper_prompt_ids(transcriber: Any) -> Any | None:
     return prompt_ids
 
 
-def normalize_prompt_ids_for_transformers(prompt_ids: Any) -> Any:
+def resolve_prompt_ids_device(transcriber: Any, config: LocalGpuWhisperConfig) -> Any | None:
+    """prompt_ids를 올릴 inference device를 pipeline 상태와 설정에서 보수적으로 결정합니다."""
+    for device in (
+        getattr(transcriber, "device", None),
+        getattr(getattr(transcriber, "model", None), "device", None),
+        config.device,
+    ):
+        normalized_device = normalize_device_value(device)
+        if normalized_device is not None:
+            return normalized_device
+    return None
+
+
+def normalize_device_value(device: Any) -> Any | None:
+    """Transformers/PyTorch device 표현을 Tensor.to에 넘기기 쉬운 값으로 정리합니다."""
+    if device is None:
+        return None
+    if isinstance(device, int):
+        return f"cuda:{device}" if device >= 0 else "cpu"
+    text = str(device).strip()
+    if not text:
+        return None
+    if text == "-1":
+        return "cpu"
+    return device
+
+
+def normalize_prompt_ids_for_transformers(prompt_ids: Any, target_device: Any | None = None) -> Any:
     """tokenizer prompt ids를 Transformers generation이 기대하는 torch long tensor로 정규화합니다."""
     try:
         import torch
@@ -234,9 +262,12 @@ def normalize_prompt_ids_for_transformers(prompt_ids: Any) -> Any:
     tensor_type = getattr(torch, "Tensor", None)
     if tensor_type is not None and isinstance(prompt_ids, tensor_type):
         if hasattr(prompt_ids, "to"):
-            return prompt_ids.to(dtype=torch.long)
+            return prompt_ids.to(device=target_device, dtype=torch.long) if target_device is not None else prompt_ids.to(dtype=torch.long)
         return prompt_ids
-    return torch.tensor(prompt_ids, dtype=torch.long)
+    tensor = torch.tensor(prompt_ids, dtype=torch.long)
+    if target_device is not None and hasattr(tensor, "to"):
+        return tensor.to(device=target_device, dtype=torch.long)
+    return tensor
 
 
 def get_local_gpu_whisper_initial_prompt() -> str:

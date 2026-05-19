@@ -378,6 +378,12 @@ class TranscribeTests(unittest.TestCase):
             def __init__(self, value: object, dtype: object):
                 self.value = value
                 self.dtype = dtype
+                self.device = None
+
+            def to(self, device: object | None = None, dtype: object | None = None):
+                self.device = device
+                self.dtype = dtype
+                return self
 
         class FakeTokenizer:
             def get_prompt_ids(self, prompt: str) -> np.ndarray:
@@ -385,6 +391,7 @@ class TranscribeTests(unittest.TestCase):
                 return np.array([101, 202], dtype=np.int64)
 
         class FakePipeline:
+            device = "cuda:0"
             tokenizer = FakeTokenizer()
 
             def __call__(self, audio_path: str, return_timestamps: bool, generate_kwargs: dict[str, object]):
@@ -434,9 +441,54 @@ class TranscribeTests(unittest.TestCase):
         prompt_ids = inference_generate_kwargs[0]["prompt_ids"]
         self.assertIsInstance(prompt_ids, FakeTensor)
         self.assertEqual(prompt_ids.dtype, "long")
+        self.assertEqual(prompt_ids.device, "cuda:0")
         self.assertEqual(prompt_ids.value.tolist(), [101, 202])
         self.assertEqual(inference_generate_kwargs[0]["language"], "ko")
         self.assertEqual(inference_generate_kwargs[0]["task"], "transcribe")
+
+    def test_local_gpu_whisper_prompt_ids_uses_configured_device_when_pipeline_device_is_absent(self) -> None:
+        """pipeline device 속성이 없어도 설정된 LOCAL_GPU_DEVICE 기준으로 prompt_ids를 이동합니다."""
+        class FakeTensor:
+            def __init__(self, value: object, dtype: object):
+                self.value = value
+                self.dtype = dtype
+                self.device = None
+
+            def to(self, device: object | None = None, dtype: object | None = None):
+                self.device = device
+                self.dtype = dtype
+                return self
+
+        class FakeTokenizer:
+            def get_prompt_ids(self, prompt: str) -> list[int]:
+                return [101, 202]
+
+        class FakePipeline:
+            tokenizer = FakeTokenizer()
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.long = "long"
+        fake_torch.tensor = lambda value, dtype: FakeTensor(value, dtype)
+        config = transformers_whisper.LocalGpuWhisperConfig(
+            model_name="openai/whisper-large-v3-turbo",
+            device="cuda:0",
+            torch_dtype="float16",
+            max_concurrency=1,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            vocabulary_file.write_text("organization_terms:\n  - BigxData\n", encoding="utf-8")
+
+            with patch.dict(
+                os.environ,
+                {"STT_VOCABULARY_PATH": str(vocabulary_file), "ENABLE_STT_VOCABULARY_HINTS": "true"},
+            ), patch.dict(sys.modules, {"torch": fake_torch}):
+                prompt_ids = transformers_whisper.build_whisper_prompt_ids(FakePipeline(), config)
+
+        self.assertIsInstance(prompt_ids, FakeTensor)
+        self.assertEqual(prompt_ids.device, "cuda:0")
+        self.assertEqual(prompt_ids.dtype, "long")
 
     def test_local_gpu_whisper_prompt_ids_conversion_failure_degrades_to_no_prompt(self) -> None:
         """prompt_ids 변환이 실패해도 전사는 prompt 없이 계속됩니다."""
