@@ -15,7 +15,7 @@ interface ProgressPanelProps {
 const DEFAULT_STEPS = [
   { label: "업로드 준비", progress: 10 },
   { label: "음성 분석 준비", progress: 20 },
-  { label: "음성 변환", progress: 70 },
+  { label: "음성 변환", progress: 85 },
   { label: "회의 요약 생성", progress: 90 },
   { label: "결과 정리", progress: 100 }
 ];
@@ -198,7 +198,7 @@ function getOptimisticProgressCap(jobStatus: JobStatusResponse | null, status: J
   }
   const chunkProgress = isChunkProgressActive(jobStatus) ? getChunkProgress(jobStatus) : null;
   if (chunkProgress !== null) {
-    return Math.min(70, chunkProgress + 2);
+    return Math.min(85, chunkProgress + 2);
   }
 
   const stage = jobStatus?.stage ?? "";
@@ -209,7 +209,7 @@ function getOptimisticProgressCap(jobStatus: JobStatusResponse | null, status: J
     return 96;
   }
   if (stage.includes("음성 변환")) {
-    return 70;
+    return 85;
   }
   if (stage.includes("파일 준비")) {
     return 20;
@@ -256,7 +256,7 @@ function getChunkProgress(jobStatus: JobStatusResponse | null): number | null {
   }
 
   const completedRatio = Math.max(0, Math.min(jobStatus.completed_chunks, jobStatus.total_chunks)) / jobStatus.total_chunks;
-  return 20 + Math.round(completedRatio * 50);
+  return 20 + Math.round(completedRatio * 65);
 }
 
 function isChunkProgressActive(jobStatus: JobStatusResponse | null): boolean {

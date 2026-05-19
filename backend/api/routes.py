@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile
 from fastapi.responses import PlainTextResponse
 
@@ -30,7 +28,6 @@ def health_check() -> dict[str, str]:
 async def create_process_job(
     background_tasks: BackgroundTasks,
     audio_file: UploadFile = File(...),
-    context_file: Optional[UploadFile] = File(default=None),
     context: str = Form(default=""),
     meeting_type: MeetingType = Form(default="execution"),
 ) -> JobCreateResponse:
@@ -40,10 +37,6 @@ async def create_process_job(
     try:
         audio_path = await save_upload_file(job.id, audio_file)
         context_text = context.strip()
-
-        if context_file is not None and context_file.filename:
-            context_path = await save_upload_file(job.id, context_file)
-            context_text = context_path.read_text(encoding="utf-8").strip()
 
         # 긴 STT/요약 작업은 요청 응답을 막지 않도록 백그라운드에서 실행합니다.
         set_job_meeting_type(job.id, meeting_type)
@@ -59,7 +52,6 @@ async def create_process_job(
 async def create_transcription_job(
     background_tasks: BackgroundTasks,
     audio_file: UploadFile = File(...),
-    context_file: Optional[UploadFile] = File(default=None),
     context: str = Form(default=""),
     meeting_type: MeetingType = Form(default="execution"),
     transcription_mode: str = Form(default="plain"),
@@ -76,10 +68,6 @@ async def create_transcription_job(
     try:
         audio_path = await save_upload_file(job.id, audio_file)
         context_text = context.strip()
-
-        if context_file is not None and context_file.filename:
-            context_path = await save_upload_file(job.id, context_file)
-            context_text = context_path.read_text(encoding="utf-8").strip()
 
         set_job_context(job.id, context_text)
         set_job_meeting_type(job.id, meeting_type)

@@ -23,7 +23,6 @@ interface ActiveJobSnapshot {
 interface StartMeetingJobPayload {
   audioFile: File | null;
   context?: string;
-  contextFile: File | null;
   meetingType?: MeetingType;
   sttProvider?: SttProviderMode;
   transcriptionMode?: TranscriptionMode;
@@ -126,7 +125,7 @@ export function useMeetingJob() {
   /**
    * Uploads the selected files and waits until the backend finishes processing.
    */
-  async function startMeetingJob({ audioFile, context = "", contextFile, meetingType = "execution" }: StartMeetingJobPayload) {
+  async function startMeetingJob({ audioFile, context = "", meetingType = "execution" }: StartMeetingJobPayload) {
     if (!audioFile) {
       setError("회의 녹음 파일을 먼저 선택해 주세요.");
       return;
@@ -141,7 +140,7 @@ export function useMeetingJob() {
     setStatus("pending");
 
     try {
-      const createdJob = await createJob({ audioFile, context, contextFile, meetingType });
+      const createdJob = await createJob({ audioFile, context, meetingType });
       saveActiveJobSnapshot({ jobId: createdJob.job_id, kind: "minutes" });
       await pollJobUntilComplete(createdJob.job_id);
     } catch (caughtError) {
@@ -156,7 +155,6 @@ export function useMeetingJob() {
   async function startTranscriptionJob({
     audioFile,
     context = "",
-    contextFile,
     meetingType = "execution",
     sttProvider = "local_gpu_whisper",
     transcriptionMode = "plain"
@@ -175,7 +173,7 @@ export function useMeetingJob() {
     setStatus("pending");
 
     try {
-      const createdJob = await createTranscriptionJob({ audioFile, context, contextFile, meetingType, sttProvider, transcriptionMode });
+      const createdJob = await createTranscriptionJob({ audioFile, context, meetingType, sttProvider, transcriptionMode });
       saveActiveJobSnapshot({ jobId: createdJob.job_id, kind: "transcript" });
       await pollTranscriptUntilComplete(createdJob.job_id);
     } catch (caughtError) {

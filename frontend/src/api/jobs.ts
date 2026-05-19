@@ -41,17 +41,13 @@ async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promi
 }
 
 /**
- * Creates a meeting processing job from the selected audio and optional context file.
+ * Creates a meeting processing job from the selected audio.
  */
 export async function createJob(payload: CreateJobPayload): Promise<CreateJobResponse> {
   const formData = new FormData();
   formData.append("audio_file", payload.audioFile);
   formData.append("meeting_type", payload.meetingType ?? "execution");
   formData.append("context", payload.context ?? "");
-
-  if (payload.contextFile) {
-    formData.append("context_file", payload.contextFile);
-  }
 
   return fetchJson<CreateJobResponse>(`${API_BASE_URL}/jobs`, {
     method: "POST",
@@ -60,7 +56,7 @@ export async function createJob(payload: CreateJobPayload): Promise<CreateJobRes
 }
 
 /**
- * Creates a transcription job from the selected audio and optional context file.
+ * Creates a transcription job from the selected audio.
  */
 export async function createTranscriptionJob(payload: CreateTranscriptionJobPayload): Promise<CreateJobResponse> {
   const formData = new FormData();
@@ -69,10 +65,6 @@ export async function createTranscriptionJob(payload: CreateTranscriptionJobPayl
   formData.append("stt_provider", payload.sttProvider ?? "local_gpu_whisper");
   formData.append("meeting_type", payload.meetingType ?? "execution");
   formData.append("context", payload.context ?? "");
-
-  if (payload.contextFile) {
-    formData.append("context_file", payload.contextFile);
-  }
 
   return fetchJson<CreateJobResponse>(`${API_BASE_URL}/transcriptions`, {
     method: "POST",

@@ -153,7 +153,7 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         updated_job = storage.get_job(job.id)
         self.assertEqual(updated_job.completed_chunks, 2)
         self.assertEqual(updated_job.total_chunks, 5)
-        self.assertEqual(updated_job.progress, 40)
+        self.assertEqual(updated_job.progress, 46)
         self.assertEqual(updated_job.stage, "음성 변환")
         self.assertIn("2/5 구간 완료", updated_job.message)
 

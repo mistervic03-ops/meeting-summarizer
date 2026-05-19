@@ -41,13 +41,13 @@ def run_meeting_pipeline(job_id: str, audio_path: Path, context: str = "", meeti
         stt_started_at = time.perf_counter()
         transcript = transcribe_audio(audio_path, progress_callback=build_chunk_progress_callback(job_id))
         stt_seconds = time.perf_counter() - stt_started_at
-        mark_job_progress(job_id, 55, "음성 변환 완료", "회의 내용을 텍스트로 변환했습니다.", stt_seconds=stt_seconds)
+        mark_job_progress(job_id, 85, "음성 변환 완료", "회의 내용을 텍스트로 변환했습니다.", stt_seconds=stt_seconds)
 
-        mark_job_progress(job_id, 70, "회의록 작성", "회의 내용을 요약하고 액션 아이템을 추출하는 중입니다.")
+        mark_job_progress(job_id, 90, "회의록 작성", "회의 내용을 요약하고 액션 아이템을 추출하는 중입니다.")
         summary_started_at = time.perf_counter()
         summary = summarize_transcript(transcript, context=context, meeting_type=meeting_type)
         summary_seconds = time.perf_counter() - summary_started_at
-        mark_job_progress(job_id, 90, "결과 정리", "결과 화면에 표시할 회의록을 정리하고 있습니다.", summary_seconds=summary_seconds)
+        mark_job_progress(job_id, 95, "결과 정리", "결과 화면에 표시할 회의록을 정리하고 있습니다.", summary_seconds=summary_seconds)
         mark_job_completed(job_id, transcript=transcript, summary=summary)
     except Exception as exc:
         mark_job_failed(job_id, f"회의록 생성 중 오류가 발생했습니다: {exc}")

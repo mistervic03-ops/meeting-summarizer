@@ -50,14 +50,12 @@ export interface TranscriptResult {
 export interface CreateJobPayload {
   audioFile: File;
   context?: string;
-  contextFile?: File | null;
   meetingType?: MeetingType;
 }
 
 export interface CreateTranscriptionJobPayload {
   audioFile: File;
   context?: string;
-  contextFile?: File | null;
   meetingType?: MeetingType;
   sttProvider?: SttProviderMode;
   transcriptionMode?: TranscriptionMode;
