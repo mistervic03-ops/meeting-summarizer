@@ -52,6 +52,8 @@ local GPU variant의 현재 전제:
 - 단일 FastAPI process/worker
 - 프로세스 안의 resident shared Whisper model
 - `LOCAL_GPU_MAX_CONCURRENCY` 기반 GPU inference semaphore
+- 기본 모델은 `openai/whisper-large-v3-turbo`
+- plain chunk size는 현재 `PLAIN_CHUNK_DURATION_SECONDS=300` 유지
 - plain STT path 우선
 - diarized mode와 OpenAI provider는 변경하지 않음
 
@@ -115,6 +117,8 @@ CPU local Whisper에서 관찰한 문제:
 - `STT_PROVIDER=local_gpu_whisper`는 `docker-compose.local-gpu.yml` overlay에서만 켭니다.
 - diarized mode는 화자별 검토가 필요한 경우를 위한 고급/실험 옵션으로 유지합니다.
 - local GPU Whisper는 plain path와 resident shared model을 전제로 합니다. stable default 전환 여부는 별도 품질/운영 검증 후 판단합니다.
+- local GPU Whisper는 long-form transcript에서 드물게 발생하는 명백한 반복 붕괴 artifact를 보수적으로 줄입니다. 예: `오오오오오`, `KPI, KPI, KPI, KPI`, `. . . . .`.
+- glossary prompt_ids 경로는 품질/안정성 확인 전까지 기본 운영 판단에 의존하지 않습니다.
 
 ## GPU STT 평가 상태
 
@@ -158,6 +162,8 @@ GPU: NVIDIA GB10
 - PyTorch Transformers Whisper `openai/whisper-large-v3`와 `openai/whisper-large-v3-turbo` GPU inference가 확인되었습니다.
 - 69초 오디오가 long-form timestamp 설정 후 약 15.9초에 전사되었습니다.
 - 이 결과는 NGC PyTorch stack을 통한 local GPU STT 품질 평가가 가능함을 확인합니다.
+- `openai/whisper-large-v3`는 품질 비교 대상으로 유지하지만 현재 운영 후보 기본값으로는 너무 느렸습니다.
+- 현재 production-candidate local GPU 기본값은 `openai/whisper-large-v3-turbo`입니다.
 
 ## 오디오 런타임 주의점
 

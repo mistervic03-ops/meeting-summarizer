@@ -227,6 +227,7 @@ class LocalGpuWhisperProvider:
             merge_started_at = time.perf_counter()
             log_trace_event("merge_start", mode="plain", chunk_count=len(transcripts), provider=self.name)
             transcript_text = "\n\n".join(transcript.strip() for transcript in transcripts if transcript.strip())
+            transcript_text = transformers_whisper.cleanup_repetition_artifacts(transcript_text)
             timing_stats.merge_seconds = time.perf_counter() - merge_started_at
             log_trace_event("merge_complete", mode="plain", elapsed_seconds=timing_stats.merge_seconds, provider=self.name)
             log_trace_event(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -21,6 +22,7 @@ DEFAULT_LOCAL_GPU_MAX_CONCURRENCY = 4
 DEFAULT_LOCAL_GPU_LANGUAGE = "ko"
 DEFAULT_LOCAL_GPU_TASK = "transcribe"
 MAX_LOCAL_GPU_WHISPER_PROMPT_CHARS = 500
+MIN_REPETITION_COLLAPSE_COUNT = 4
 
 _pipeline_cache: dict[tuple[str, str, str], Any] = {}
 _pipeline_lock = Lock()
@@ -349,6 +351,45 @@ def build_canonical_terms_prompt(terms: list[str]) -> str:
             break
         selected_terms.append(term)
     return ", ".join(selected_terms)
+
+
+def cleanup_repetition_artifacts(transcript: str) -> str:
+    """local GPU Whisper 출력의 명백한 반복 붕괴 artifact만 보수적으로 줄입니다."""
+    original = transcript
+    cleaned = transcript
+    patterns_removed = 0
+
+    cleanup_rules = [
+        # 같은 한글 음절/문자가 길게 반복된 경우: 오오오오오 -> 오
+        (re.compile(r"([가-힣])\1{3,}"), r"\1"),
+        # 같은 문장부호가 붙거나 띄어서 반복된 경우: . . . . . -> .
+        (re.compile(r"([.!?。！？,，;；:：~])(?:\s*\1){3,}"), r"\1"),
+        # 짧은 대문자/숫자 acronym이 comma로 반복된 경우: KPI, KPI, KPI, KPI -> KPI
+        (re.compile(r"\b([A-Z][A-Z0-9]{0,7})(?:\s*,\s*\1){3,}\b"), r"\1"),
+        # 짧은 구절이 네 번 이상 그대로 반복된 경우만 접습니다.
+        (
+            re.compile(
+                r"\b([A-Za-z가-힣0-9]{1,12}\s+[A-Za-z가-힣0-9]{1,12}(?:\s+[A-Za-z가-힣0-9]{1,12}){0,3})"
+                r"(?:[,\s]+\1){3,}\b"
+            ),
+            r"\1",
+        ),
+    ]
+
+    for pattern, replacement in cleanup_rules:
+        cleaned, count = pattern.subn(replacement, cleaned)
+        patterns_removed += count
+
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([.!?,;:])", r"\1", cleaned).strip()
+
+    if cleaned != original:
+        logger.info(
+            "local_gpu_whisper_repetition_cleanup_applied chars_removed=%s patterns_removed=%s",
+            max(0, len(original) - len(cleaned)),
+            patterns_removed,
+        )
+    return cleaned
 
 
 def get_inference_semaphore(max_concurrency: int) -> BoundedSemaphore:

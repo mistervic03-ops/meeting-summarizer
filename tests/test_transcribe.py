@@ -538,6 +538,38 @@ class TranscribeTests(unittest.TestCase):
         self.assertEqual(transcript, "unprompted transcript")
         self.assertEqual(inference_generate_kwargs, [{"language": "ko", "task": "transcribe"}])
 
+    def test_local_gpu_whisper_cleanup_reduces_repeated_korean_character_artifacts(self) -> None:
+        """local_gpu_whisper cleanup은 길게 반복된 한글 음절 artifact만 줄입니다."""
+        transcript = "오늘 논의는 오오오오오오 여기서 시작합니다."
+
+        cleaned = transformers_whisper.cleanup_repetition_artifacts(transcript)
+
+        self.assertEqual(cleaned, "오늘 논의는 오 여기서 시작합니다.")
+
+    def test_local_gpu_whisper_cleanup_reduces_repeated_short_acronym_artifacts(self) -> None:
+        """local_gpu_whisper cleanup은 반복 붕괴된 짧은 acronym 나열을 줄입니다."""
+        transcript = "이번 분기 KPI, KPI, KPI, KPI 기준을 다시 봅니다. . . . . 다음 안건입니다."
+
+        cleaned = transformers_whisper.cleanup_repetition_artifacts(transcript)
+
+        self.assertEqual(cleaned, "이번 분기 KPI 기준을 다시 봅니다. 다음 안건입니다.")
+
+    def test_local_gpu_whisper_cleanup_preserves_normal_korean_conversation_repetition(self) -> None:
+        """local_gpu_whisper cleanup은 정상적인 짧은 대화 반복을 보존합니다."""
+        transcript = "네, 네. 그 부분은 맞습니다. 네, 그러면 다음으로 넘어가겠습니다."
+
+        cleaned = transformers_whisper.cleanup_repetition_artifacts(transcript)
+
+        self.assertEqual(cleaned, transcript)
+
+    def test_local_gpu_whisper_cleanup_preserves_normal_domain_terms(self) -> None:
+        """local_gpu_whisper cleanup은 정상적으로 등장한 도메인 용어를 바꾸지 않습니다."""
+        transcript = "KPI 기준으로 LLM과 SLM을 비교하고 Graph RAG 적용 범위를 논의했습니다."
+
+        cleaned = transformers_whisper.cleanup_repetition_artifacts(transcript)
+
+        self.assertEqual(cleaned, transcript)
+
     def test_local_gpu_whisper_converts_m4a_to_wav_before_pipeline(self) -> None:
         """Transformers pipeline에 m4a를 직접 넘기지 않고 임시 WAV를 전달합니다."""
         inference_calls: list[str] = []
