@@ -1845,6 +1845,20 @@ terms:
         self.assertIn("<OUTPUT_SCHEMA>", call_kwargs["messages"][0]["content"])
         self.assertIn("JSON object 하나만 반환", call_kwargs["messages"][0]["content"])
 
+    def test_build_claude_json_prompt_uses_compact_schema(self) -> None:
+        """Claude 구조 추출 prompt는 같은 schema를 compact JSON으로 포함합니다."""
+        from summarization.llm_provider import build_claude_json_prompt
+
+        prompt = build_claude_json_prompt("구조 추출 prompt")
+        schema_text = prompt.split("<OUTPUT_SCHEMA>", 1)[1].split("</OUTPUT_SCHEMA>", 1)[0].strip()
+        parsed_schema = json.loads(schema_text)
+
+        self.assertEqual(parsed_schema, summarize.MEETING_STRUCTURE_SCHEMA)
+        for key in ("summary_facts", "decisions", "action_items", "speaker_highlights", "warnings"):
+            self.assertIn(key, schema_text)
+        self.assertNotIn('\n  "properties"', schema_text)
+        self.assertNotIn('\n    "summary_facts"', schema_text)
+
     def test_request_claude_structured_structure_rejects_malformed_json(self) -> None:
         """Claude 구조 추출 응답이 JSON object가 아니면 명확히 실패합니다."""
         fake_response = types.SimpleNamespace(content=[types.SimpleNamespace(text="설명: JSON이 아닙니다")])

@@ -1,4 +1,5 @@
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import EmptySection from "./ui/EmptySection";
 import { normalizeMarkdownForDisplay } from "../utils/displayText";
 
@@ -54,8 +55,19 @@ export default function MinutesTab({ isEditing = false, minutes, onChange }: Min
           ol: ({ children }) => <ol className="mb-6 ml-5 list-decimal space-y-1.5">{children}</ol>,
           li: ({ children }) => <li className="break-words pl-1 text-[14px] leading-[1.82] text-slate-700 dark:text-app-body">{children}</li>,
           p: ({ children }) => <p className="mb-[18px] whitespace-pre-wrap break-words text-[15px] leading-[1.82] text-slate-700 dark:text-app-body">{children}</p>,
-          strong: ({ children }) => <strong className="font-semibold text-slate-950 dark:text-app-text">{children}</strong>
+          strong: ({ children }) => <strong className="font-semibold text-slate-950 dark:text-app-text">{children}</strong>,
+          table: ({ children }) => (
+            <div className="mb-6 overflow-x-auto border-y border-slate-200 dark:border-app-line">
+              <table className="min-w-full border-collapse text-left text-[14px] leading-6">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-slate-50 text-slate-900 dark:bg-app-panel dark:text-app-text">{children}</thead>,
+          tbody: ({ children }) => <tbody className="divide-y divide-slate-200 dark:divide-app-line">{children}</tbody>,
+          tr: ({ children }) => <tr>{children}</tr>,
+          th: ({ children }) => <th className="whitespace-nowrap px-3 py-2.5 font-semibold">{children}</th>,
+          td: ({ children }) => <td className="px-3 py-2.5 align-top text-slate-700 dark:text-app-body">{children}</td>
         }}
+        remarkPlugins={[remarkGfm]}
       >
         {displayMinutes}
       </ReactMarkdown>

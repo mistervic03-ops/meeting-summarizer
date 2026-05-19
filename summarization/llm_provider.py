@@ -91,7 +91,7 @@ def request_claude_minutes_generation(prompt: str) -> str:
 
 def build_claude_json_prompt(prompt: str) -> str:
     """Claude 구조 추출 요청에 schema와 JSON-only 지침을 덧붙입니다."""
-    schema_json = json.dumps(MEETING_STRUCTURE_SCHEMA, ensure_ascii=False, indent=2)
+    schema_json = json.dumps(MEETING_STRUCTURE_SCHEMA, ensure_ascii=False, separators=(",", ":"))
     return f"""
 {prompt}
 
