@@ -47,12 +47,7 @@ export function splitDiscussionNotes(summaryFacts: string[] = []): { discussionN
   );
 }
 
-export function getDisplayWarnings(warnings: string[] = [], meetingType?: MeetingType | null): string[] {
-  const resolvedType = resolveMeetingType(meetingType);
-  if (resolvedType === "execution" || resolvedType === "general") {
-    return warnings;
-  }
-
+export function getDisplayWarnings(warnings: string[] = [], _meetingType?: MeetingType | null): string[] {
   const seen = new Set<string>();
   return warnings.reduce<string[]>((result, warning) => {
     if (warning.includes("논의 메모로 분류")) {
@@ -80,42 +75,42 @@ export function getSummaryLabels(meetingType?: MeetingType | null): {
   const resolvedType = resolveMeetingType(meetingType);
   if (resolvedType === "technical_review") {
     return {
-      discussionTitle: "논의 메모",
-      summaryTitle: "주요 논의",
-      warningTitle: "검토 메모",
+      discussionTitle: "후속 검토 메모",
+      summaryTitle: "요약",
+      warningTitle: "검토 필요",
       warningHelp: "추가 확인이 필요할 수 있는 맥락입니다.\n운영 액션으로 확정된 항목은 별도로 표시됩니다.",
       warningMeta: "맥락 확인 ·",
-      speakerTitle: "기술 설명 / 질문 응답"
+      speakerTitle: "논의 하이라이트"
     };
   }
   if (resolvedType === "customer_meeting") {
     return {
-      discussionTitle: "후속 논의",
-      summaryTitle: "고객 관심사 및 검토 포인트",
-      warningTitle: "검토 메모",
+      discussionTitle: "후속 검토 메모",
+      summaryTitle: "요약",
+      warningTitle: "검토 필요",
       warningHelp: "요구사항이나 후속 논의 맥락에서 추가 확인이 필요할 수 있는 항목입니다.",
       warningMeta: "맥락 확인 ·",
-      speakerTitle: "주요 논의"
+      speakerTitle: "논의 하이라이트"
     };
   }
   if (resolvedType === "brainstorming") {
     return {
-      discussionTitle: "논의 메모",
-      summaryTitle: "아이디어 및 논점",
-      warningTitle: "검토 메모",
+      discussionTitle: "후속 검토 메모",
+      summaryTitle: "요약",
+      warningTitle: "검토 필요",
       warningHelp: "아이디어나 논점 중 추가 확인이 필요할 수 있는 항목입니다.",
       warningMeta: "맥락 확인 ·",
-      speakerTitle: "논의 내용"
+      speakerTitle: "논의 하이라이트"
     };
   }
 
   return {
-    discussionTitle: "논의 메모",
+    discussionTitle: "후속 검토 메모",
     summaryTitle: "요약",
     warningTitle: "검토 필요",
     warningHelp: "담당자·기한·근거가 불명확한 항목입니다.\n회의록 생성은 계속 진행할 수 있습니다.",
     warningMeta: "추가 확인 권장 ·",
-    speakerTitle: "주요 발언 요약"
+    speakerTitle: "논의 하이라이트"
   };
 }
 
