@@ -2755,7 +2755,7 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("회의록 작성 시 반드시 이 JSON을 기준", prompt)
         self.assertIn("원문은 표현과 문맥을 자연스럽게 다듬기 위한 참고용", prompt)
         self.assertIn("summary_facts는 회의 요약", prompt)
-        self.assertIn("decisions는 주요 결정사항", prompt)
+        self.assertIn("decisions는 status에 따라 확정 결정과 미확정 논의로 구분", prompt)
         self.assertIn("speaker_highlights는 주요 발언/논의 포인트", prompt)
         self.assertIn("액션 아이템 담당자는 검증 JSON의 owner를 따르고", prompt)
         self.assertIn("1인칭 표현(저, 제가) 자체를 담당자명으로 쓰지 마세요", prompt)
@@ -2765,6 +2765,27 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("주요 결정사항", prompt)
         self.assertIn("액션 아이템", prompt)
         self.assertIn("주요 발언/논의 포인트", prompt)
+
+    def test_build_minutes_prompt_separates_confirmed_and_tentative_decisions(self) -> None:
+        """회의록 생성 프롬프트는 확정 결정과 미확정 논의를 구분하도록 지시합니다."""
+        structure = empty_track_b_structure()
+        structure["decisions"] = [
+            {"decision": "배포 일정을 확정한다", "status": "확정"},
+            {"decision": "온톨로지 구축 방향을 검토한다", "status": "미확정"},
+        ]
+
+        prompt = summarize.build_minutes_prompt("회의 내용", structure)
+
+        self.assertIn('status가 "확정"인 항목만 확정된 주요 결정사항', prompt)
+        self.assertIn('status가 "미확정"인 항목은 확정 결정처럼 쓰지 말고', prompt)
+        self.assertIn('"논의된 방향"', prompt)
+        self.assertIn('"검토 중인 사항"', prompt)
+        self.assertIn('"추가 확인이 필요한 방향성"', prompt)
+        self.assertIn('"결정했다"보다 "논의됐다"', prompt)
+        self.assertIn('"검토가 필요하다"', prompt)
+        self.assertIn('"방향으로 언급됐다"', prompt)
+        self.assertIn('확정 결정이 없으면 "주요 결정사항"을 억지로 만들지 말고', prompt)
+        self.assertIn('검토/논의된 방향 (status가 "미확정"인 항목이 있을 때)', prompt)
 
     def test_build_minutes_prompt_uses_meeting_type_focus(self) -> None:
         """회의록 생성 프롬프트는 meeting_type별 작성 초점을 포함합니다."""
