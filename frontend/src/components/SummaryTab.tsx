@@ -1,9 +1,10 @@
 import { ChevronDown, Info } from "lucide-react";
 import { Decision, JobResult, MeetingType } from "../api/types";
+import ActionsTab from "./ActionsTab";
 import EmptySection from "./ui/EmptySection";
 import SectionHeading from "./ui/SectionHeading";
 import { normalizeDisplayText } from "../utils/displayText";
-import { getSummaryLabels, resolveMeetingType, splitDiscussionNotes } from "../utils/resultView";
+import { getSummaryLabels, resolveMeetingType, splitDiscussionNotes, usesQuietActionTone } from "../utils/resultView";
 
 /**
  * Renders the decision status badge in the summary tab.
@@ -59,6 +60,7 @@ export default function SummaryTab({
   const splitFacts = splitDiscussionNotes(result.summary_facts ?? []);
   const visibleSummaryFacts = summaryFacts ?? splitFacts.summaryFacts;
   const visibleDiscussionNotes = discussionNotes ?? splitFacts.discussionNotes;
+  const actionItems = result.action_items ?? [];
   const decisions = result.decisions ?? [];
   const confirmedDecisions = decisions.filter((decision) => decision.status === "확정");
   const tentativeDecisions = decisions.filter((decision) => decision.status === "미확정");
@@ -67,6 +69,12 @@ export default function SummaryTab({
   const labels = getSummaryLabels(resolvedMeetingType);
   const sectionOrder = getSectionOrder(resolvedMeetingType);
   const sectionMap = {
+    actions: (
+      <section key="actions">
+        <SectionHeading count={actionItems.length} title="액션 아이템" />
+        <ActionsTab isQuiet={usesQuietActionTone(resolvedMeetingType)} items={actionItems} />
+      </section>
+    ),
     decisions: decisions.length ? (
       <div key="decisions" className="space-y-7">
         {confirmedDecisions.length ? (
@@ -169,15 +177,6 @@ export default function SummaryTab({
   );
 }
 
-function getSectionOrder(meetingType: MeetingType): Array<"decisions" | "notes" | "speakers" | "summary" | "warnings"> {
-  if (meetingType === "technical_review") {
-    return ["summary", "speakers", "notes", "decisions", "warnings"];
-  }
-  if (meetingType === "customer_meeting") {
-    return ["summary", "notes", "decisions", "speakers", "warnings"];
-  }
-  if (meetingType === "brainstorming") {
-    return ["summary", "notes", "speakers", "decisions", "warnings"];
-  }
-  return ["decisions", "summary", "notes", "warnings", "speakers"];
+function getSectionOrder(_meetingType: MeetingType): Array<"actions" | "decisions" | "notes" | "speakers" | "summary" | "warnings"> {
+  return ["summary", "decisions", "actions", "speakers", "notes", "warnings"];
 }
