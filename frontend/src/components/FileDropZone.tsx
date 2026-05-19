@@ -12,6 +12,7 @@ interface FileDropZoneProps {
   kind: FileDropZoneKind;
   label: string;
   optional?: boolean;
+  required?: boolean;
   onFileChange: (file: File | null) => void;
 }
 
@@ -37,6 +38,7 @@ export default function FileDropZone({
   kind,
   label,
   optional = false,
+  required = false,
   onFileChange
 }: FileDropZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -96,7 +98,9 @@ export default function FileDropZone({
           </h2>
           <p className="mt-0.5 text-[11px] leading-4 text-slate-400">{description}</p>
         </div>
-        {optional ? (
+        {required ? (
+          <span className="mt-0.5 text-[11px] font-medium text-slate-400">필수</span>
+        ) : optional ? (
           <span className="mt-0.5 text-[11px] font-medium text-slate-400">선택</span>
         ) : null}
       </div>

@@ -13,7 +13,7 @@ import TranscriptPage from "./TranscriptPage";
 
 const AUDIO_ACCEPT = "audio/*,.m4a,.mp3,.mp4,.mpeg,.mpga,.wav,.webm";
 const TRANSCRIPT_ACCEPT = ".txt,.md,text/plain,text/markdown";
-const CONTEXT_HELP_TEXT = "회의 목적, 고객사, 프로젝트명, 주요 용어를 짧게 적어주세요.\n예: A소프트와 향후 협력 방향성 및 후속 액션 논의";
+const CONTEXT_HELP_TEXT = "선택 입력입니다. 회의 목적, 고객사, 프로젝트명, 주요 용어를 짧게 적으면 요약에 참고합니다.\n예: A소프트와 향후 협력 방향성 및 후속 액션 논의";
 const CLOUD_MODE_HELP_TEXT = "OpenAI로 음성을 텍스트로 바꿉니다.\n비용이 발생할 수 있어 중요한 회의나 결과 비교가 필요할 때만 사용하세요.";
 type InputMode = "audio" | "text";
 
@@ -224,21 +224,29 @@ export default function UploadPage() {
                   file={audioFile}
                   kind="audio"
                   label="회의 녹음"
+                  required
                   onFileChange={setAudioFile}
                 />
               ) : (
                 <section className="space-y-2">
+                  <div>
+                    <h2 className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-slate-950">
+                      회의 내용
+                      <span className="rounded-sm bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">필수</span>
+                    </h2>
+                    <p className="mt-0.5 text-[11px] leading-4 text-slate-500">파일을 올리거나 내용을 붙여넣으면 됩니다.</p>
+                  </div>
                   <FileDropZone
                     accept={TRANSCRIPT_ACCEPT}
                     description="txt 또는 md 회의 내용 파일"
                     file={transcriptFile}
                     kind="context"
-                    label="회의 내용 파일"
+                    label="파일로 불러오기"
                     optional
                     onFileChange={setTranscriptFile}
                   />
                   <label className="block">
-                    <span className="text-[13px] font-semibold text-slate-950">회의 내용 붙여넣기</span>
+                    <span className="text-[13px] font-semibold text-slate-950">직접 붙여넣기</span>
                     <textarea
                       className="mt-2 min-h-56 w-full resize-y rounded-md border border-slate-300 bg-white p-3 font-sans text-[13px] leading-6 text-slate-800 outline-none transition-colors duration-150 ease-out placeholder:text-slate-400 focus-visible:border-brand-300 focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 disabled:opacity-90 dark:bg-app-field"
                       disabled={isBusy}
@@ -252,10 +260,14 @@ export default function UploadPage() {
 
               <section className="space-y-2">
                 <label className="block">
-                  <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-slate-950">
-                    회의 배경 메모
-                    <ContextHelp text={CONTEXT_HELP_TEXT} />
-                  </span>
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-slate-950">
+                      회의 배경 메모
+                      <ContextHelp text={CONTEXT_HELP_TEXT} />
+                    </span>
+                    <span className="mt-0.5 text-[11px] font-medium text-slate-400">선택</span>
+                  </div>
+                  <p className="mt-0.5 text-[11px] leading-4 text-slate-500">비워도 시작할 수 있고, 입력하면 요약에 참고합니다.</p>
                   <textarea
                     className="mt-2 min-h-24 w-full resize-y rounded-md border border-slate-300 bg-white p-3 font-sans text-[13px] leading-5 text-slate-800 outline-none transition-colors duration-150 ease-out placeholder:text-slate-400 focus-visible:border-brand-300 focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500 disabled:opacity-90 dark:bg-app-field"
                     disabled={isBusy}
@@ -416,9 +428,9 @@ export default function UploadPage() {
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-4 py-1.5">
-                  <dt className="text-slate-500">참고 자료</dt>
+                  <dt className="text-slate-500">회의 배경 메모</dt>
                   <dd className={contextText.trim() ? "font-medium text-slate-950" : "font-medium text-slate-400"}>
-                    {contextText.trim() ? "입력됨" : "선택"}
+                    {contextText.trim() ? "입력됨" : "선택 입력"}
                   </dd>
                 </div>
                 <div className="flex items-center justify-between gap-4 py-1.5">

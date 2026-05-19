@@ -1431,7 +1431,12 @@ Speaker 1: 배포 확인
         self.assertIn("speaker label이 있는 1인칭 발화에서 owner가 speaker label로 해결되면 담당자 확인 warning을 만들지 마세요", prompt)
         self.assertIn("owner에 \"저\", \"제가\", \"저희\" 같은 1인칭 표현 자체를 쓰지 마세요", prompt)
         self.assertIn("owner와 due_date가 둘 다 명확할 때만 \"high\"", prompt)
-        self.assertIn("speaker_highlights에는 주요 발언", prompt)
+        self.assertIn("주요 발언/논의 포인트", prompt)
+        self.assertIn("speaker_highlights에는 주요 발언 또는 논의 포인트", prompt)
+        self.assertIn("신뢰할 수 있는 화자명이 있을 때만 화자별 하이라이트", prompt)
+        self.assertIn("speaker label이 없거나 \"Unknown\"처럼 불확실하면 화자를 만들지 말고", prompt)
+        self.assertIn("plain transcript에서는 speaker_highlights를 화자별 발언이 아니라 주요 논의/source highlight", prompt)
+        self.assertIn("speaker_highlights만으로 새로운 사실, 결정, action_item을 만들지 마세요", prompt)
 
     def test_build_extraction_prompt_includes_meeting_type_policy(self) -> None:
         """회의 유형별 정책이 구조 추출 프롬프트에 삽입됩니다."""
@@ -2741,7 +2746,7 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("원문은 표현과 문맥을 자연스럽게 다듬기 위한 참고용", prompt)
         self.assertIn("summary_facts는 회의 요약", prompt)
         self.assertIn("decisions는 주요 결정사항", prompt)
-        self.assertIn("speaker_highlights는 주요 발언 요약", prompt)
+        self.assertIn("speaker_highlights는 주요 발언/논의 포인트", prompt)
         self.assertIn("액션 아이템 담당자는 검증 JSON의 owner를 따르고", prompt)
         self.assertIn("1인칭 표현(저, 제가) 자체를 담당자명으로 쓰지 마세요", prompt)
         self.assertIn("회의록 작성 초점", prompt)
@@ -2749,7 +2754,7 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("회의 요약", prompt)
         self.assertIn("주요 결정사항", prompt)
         self.assertIn("액션 아이템", prompt)
-        self.assertIn("주요 발언 요약", prompt)
+        self.assertIn("주요 발언/논의 포인트", prompt)
 
     def test_build_minutes_prompt_uses_meeting_type_focus(self) -> None:
         """회의록 생성 프롬프트는 meeting_type별 작성 초점을 포함합니다."""
