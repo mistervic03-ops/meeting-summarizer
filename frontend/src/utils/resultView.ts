@@ -14,26 +14,16 @@ export function resolveMeetingType(meetingType?: MeetingType | null): MeetingTyp
   return meetingType && MEETING_TYPES.includes(meetingType) ? meetingType : "general";
 }
 
-export function getResultTabs(meetingType?: MeetingType | null): ResultTabConfig[] {
-  const resolvedType = resolveMeetingType(meetingType);
-  if (resolvedType === "execution" || resolvedType === "general") {
-    return [
-      { id: "actions", label: "액션 아이템" },
-      { id: "summary", label: "요약 및 결정사항" },
-      { id: "minutes", label: "회의록" }
-    ];
-  }
-
+export function getResultTabs(_meetingType?: MeetingType | null): ResultTabConfig[] {
   return [
-    { id: "summary", label: getSummaryTabLabel(resolvedType) },
+    { id: "summary", label: "요약 및 결정사항" },
     { id: "actions", label: "액션 아이템" },
     { id: "minutes", label: "회의록" }
   ];
 }
 
-export function getDefaultResultTab(meetingType?: MeetingType | null): ResultTab {
-  const resolvedType = resolveMeetingType(meetingType);
-  return resolvedType === "execution" || resolvedType === "general" ? "actions" : "summary";
+export function getDefaultResultTab(_meetingType?: MeetingType | null): ResultTab {
+  return "summary";
 }
 
 export function splitDiscussionNotes(summaryFacts: string[] = []): { discussionNotes: string[]; summaryFacts: string[] } {
@@ -149,19 +139,6 @@ export function getMeetingFocusLabel(meetingType?: MeetingType | null): string {
 export function usesQuietActionTone(meetingType?: MeetingType | null): boolean {
   const resolvedType = resolveMeetingType(meetingType);
   return resolvedType === "technical_review" || resolvedType === "customer_meeting" || resolvedType === "brainstorming";
-}
-
-function getSummaryTabLabel(meetingType: MeetingType): string {
-  if (meetingType === "technical_review") {
-    return "주요 논의";
-  }
-  if (meetingType === "customer_meeting") {
-    return "고객 관심사";
-  }
-  if (meetingType === "brainstorming") {
-    return "아이디어 및 논점";
-  }
-  return "요약 및 결정사항";
 }
 
 function softenWarning(warning: string): string {
