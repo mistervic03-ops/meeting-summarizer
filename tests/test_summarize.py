@@ -1518,7 +1518,8 @@ Speaker 1: 배포 확인
 
         self.assertEqual(result.downgraded_action_count, 1)
         self.assertEqual(result.structure["action_items"], [])
-        self.assertIn("논의 메모: 도입 가능성을 검토해볼 수 있습니다.", result.structure["summary_facts"])
+        self.assertIn("논의 메모: 도입 가능성 검토", result.structure["summary_facts"])
+        self.assertNotIn("논의 메모: 도입 가능성을 검토해볼 수 있습니다.", result.structure["summary_facts"])
         self.assertTrue(any("실행 약속이 불명확" in warning for warning in result.structure["warnings"]))
 
     def test_apply_extraction_policy_preserves_execution_actions_aggressively(self) -> None:
@@ -1566,7 +1567,7 @@ Speaker 1: 배포 확인
         result = summarize.apply_extraction_policy(structure, "technical_review")
 
         self.assertEqual(result.structure["action_items"], [])
-        self.assertIn("논의 메모: 아키텍처 구조를 설명했습니다.", result.structure["summary_facts"])
+        self.assertIn("논의 메모: 아키텍처 구조 검토", result.structure["summary_facts"])
 
     def test_customer_meeting_suppresses_weak_followup_actions(self) -> None:
         """고객 미팅의 약한 후속 논의 표현은 action_item에서 낮춥니다."""
@@ -1590,6 +1591,29 @@ Speaker 1: 배포 확인
 
         self.assertEqual(result.downgraded_action_count, 1)
         self.assertEqual(result.structure["action_items"], [])
+        self.assertIn("논의 메모: 요구사항 후속 논의", result.structure["summary_facts"])
+
+    def test_downgraded_action_note_falls_back_to_source_quote_without_task(self) -> None:
+        """task가 비어 있으면 낮춘 action 후보는 source_quote를 fallback으로 사용합니다."""
+        structure = {
+            "summary_facts": [],
+            "decisions": [],
+            "action_items": [
+                {
+                    "task": "",
+                    "owner": "미정",
+                    "due_date": "미정",
+                    "confidence": "low",
+                    "source_quote": "요구사항은 다음에 논의했습니다.",
+                }
+            ],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+
+        result = summarize.apply_extraction_policy(structure, "customer_meeting")
+
+        self.assertEqual(result.downgraded_action_count, 1)
         self.assertIn("논의 메모: 요구사항은 다음에 논의했습니다.", result.structure["summary_facts"])
 
     def test_strict_policy_downgrades_weak_decisions(self) -> None:
@@ -1612,8 +1636,30 @@ Speaker 1: 배포 확인
 
         self.assertEqual(result.downgraded_decision_count, 1)
         self.assertEqual(result.structure["decisions"], [])
-        self.assertIn("논의 메모: 신규 구조 적용 가능성이 언급되었습니다.", result.structure["summary_facts"])
+        self.assertIn("논의 메모: 신규 구조 적용 가능성이 언급되었다", result.structure["summary_facts"])
+        self.assertNotIn("논의 메모: 신규 구조 적용 가능성이 언급되었습니다.", result.structure["summary_facts"])
         self.assertTrue(any("확정 근거가 약" in warning for warning in result.structure["warnings"]))
+
+    def test_downgraded_decision_note_falls_back_to_source_quote_without_decision(self) -> None:
+        """decision이 비어 있으면 낮춘 결정 후보는 source_quote를 fallback으로 사용합니다."""
+        structure = {
+            "summary_facts": [],
+            "decisions": [
+                {
+                    "decision": "",
+                    "status": "미확정",
+                    "source_quote": "신규 구조 적용 가능성이 언급되었습니다.",
+                }
+            ],
+            "action_items": [],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+
+        result = summarize.apply_extraction_policy(structure, "brainstorming")
+
+        self.assertEqual(result.downgraded_decision_count, 1)
+        self.assertIn("논의 메모: 신규 구조 적용 가능성이 언급되었습니다.", result.structure["summary_facts"])
 
     def test_apply_extraction_policy_preserves_schema_shape(self) -> None:
         """정책 후처리 이후에도 기존 구조화 schema key를 유지합니다."""

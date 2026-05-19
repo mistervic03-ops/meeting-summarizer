@@ -317,20 +317,18 @@ def should_downgrade_decision(item: dict[str, Any], policy: ExtractionPolicy) ->
 
 def build_downgraded_action_note(item: dict[str, Any]) -> str:
     """낮춘 action 후보를 summary_facts에 남길 문장으로 만듭니다."""
-    task = as_text(item.get("task")) or "후속 작업 후보"
+    task = as_text(item.get("task"))
     source_quote = as_text(item.get("source_quote"))
-    if source_quote:
-        return f"논의 메모: {source_quote}"
-    return f"논의 메모: {task}"
+    note = task or source_quote or "후속 작업 후보"
+    return f"논의 메모: {note}"
 
 
 def build_downgraded_decision_note(item: dict[str, Any]) -> str:
     """낮춘 decision 후보를 summary_facts에 남길 문장으로 만듭니다."""
-    decision = as_text(item.get("decision")) or "결정 후보"
+    decision = as_text(item.get("decision"))
     source_quote = as_text(item.get("source_quote"))
-    if source_quote:
-        return f"논의 메모: {source_quote}"
-    return f"논의 메모: {decision}"
+    note = decision or source_quote or "결정 후보"
+    return f"논의 메모: {note}"
 
 
 def build_downgraded_action_warning(item: dict[str, Any]) -> str:
