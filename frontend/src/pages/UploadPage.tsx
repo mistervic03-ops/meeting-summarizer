@@ -49,6 +49,7 @@ export default function UploadPage() {
     completedFileName,
     error,
     jobStatus,
+    recoveryMessage,
     resetJobState,
     result,
     startTranscriptionJob,
@@ -220,6 +221,12 @@ export default function UploadPage() {
               ) : null}
               {status === "processing" || status === "pending" ? (
                 <p className="text-[11px] leading-4 text-brand-700 dark:text-app-accent">파일을 올리고 검토용 내용을 준비하고 있습니다.</p>
+              ) : null}
+              {recoveryMessage ? (
+                <p className="flex items-center gap-1.5 text-[11px] leading-4 text-brand-700 dark:text-app-accent">
+                  <Info className="shrink-0" size={13} />
+                  <span>{recoveryMessage}</span>
+                </p>
               ) : null}
               {error ? <p className="break-words text-xs font-medium leading-5 text-red-700">{error}</p> : null}
               {completedFileName ? (
