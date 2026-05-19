@@ -1304,7 +1304,8 @@ class SummarizeTests(unittest.TestCase):
 
         self.assertIn("회의 날짜: 2026-05-14", prompt)
         self.assertIn("회의 유형: general", prompt)
-        self.assertIn("일반 회의입니다", prompt)
+        self.assertIn("회의 유형은 요약의 강조점을 정하기 위한 참고 정보", prompt)
+        self.assertIn("일반 회의에서는 명확한 실행 약속", prompt)
         self.assertIn("스키마에 없는 필드는 생성하지 마세요", prompt)
         self.assertIn("due_date는 확실한 절대 날짜가 원문에 직접 나온 경우가 아니면 ISO 날짜로 바꾸지 말고", prompt)
         self.assertIn("\"금요일 오후 3시\"", prompt)
@@ -1356,15 +1357,23 @@ class SummarizeTests(unittest.TestCase):
         execution_prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14", meeting_type="execution")
         customer_prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14", meeting_type="customer_meeting")
         brainstorming_prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14", meeting_type="brainstorming")
+        general_prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14", meeting_type="general")
 
         self.assertIn("회의 유형: technical_review", technical_prompt)
-        self.assertIn("제품 설명, 가능성, 아키텍처 논의, 개념 설명", technical_prompt)
+        self.assertIn("제약 조건, 설계 tradeoff, 리스크", technical_prompt)
         self.assertIn("회의 유형: execution", execution_prompt)
-        self.assertIn("action_items, owner, due_date, decisions를 적극적으로", execution_prompt)
+        self.assertIn("진행 상황, 담당자, 일정, 후속 작업을 원문 근거", execution_prompt)
         self.assertIn("회의 유형: customer_meeting", customer_prompt)
-        self.assertIn("고객 관심사, 후속 논의 주제, 요구사항, 리스크", customer_prompt)
+        self.assertIn("고객 요구, 우려사항, 요구사항, 리스크", customer_prompt)
         self.assertIn("회의 유형: brainstorming", brainstorming_prompt)
-        self.assertIn("action_item 추출은 매우 보수적으로", brainstorming_prompt)
+        self.assertIn("아이디어, 선택지, 질문, 우려사항", brainstorming_prompt)
+        self.assertIn("회의 유형: general", general_prompt)
+        self.assertIn("핵심 논의 맥락을 균형 있게", general_prompt)
+
+        for prompt in [technical_prompt, execution_prompt, customer_prompt, brainstorming_prompt, general_prompt]:
+            self.assertIn("회의 유형은 요약의 강조점을 정하기 위한 참고 정보", prompt)
+            self.assertIn("항목 생성 여부는 항상 transcript의 명시적 근거", prompt)
+            self.assertIn("회의 유형만으로 결정, 액션, 참석자, 사실, 약속을 만들거나 제외하지 마세요", prompt)
 
     def test_extraction_policy_selects_by_meeting_type(self) -> None:
         """meeting_type에 따라 중앙 정책 profile을 선택합니다."""
@@ -1383,10 +1392,12 @@ class SummarizeTests(unittest.TestCase):
         prompt_guidance = summarize.build_policy_prompt_guidance("customer_meeting")
 
         self.assertIn("회의 유형: customer_meeting", prompt_guidance)
-        self.assertIn("action_threshold=strict", prompt_guidance)
-        self.assertIn("decision_threshold=strict", prompt_guidance)
-        self.assertIn("followup_sensitivity=moderate", prompt_guidance)
-        self.assertIn("고객 관심사, 후속 논의 주제, 요구사항, 리스크", prompt_guidance)
+        self.assertIn("회의 유형은 요약의 강조점을 정하기 위한 참고 정보", prompt_guidance)
+        self.assertIn("transcript의 명시적 근거를 우선", prompt_guidance)
+        self.assertIn("회의 유형만으로 결정, 액션, 참석자, 사실, 약속을 만들거나 제외하지 마세요", prompt_guidance)
+        self.assertIn("transcript에 명확한 요청, 담당, 기한, 실행 약속", prompt_guidance)
+        self.assertIn("고객 요구, 우려사항, 요구사항, 리스크", prompt_guidance)
+        self.assertIn("약한 관심 표현이나 탐색적 논의", prompt_guidance)
 
     def test_apply_extraction_policy_downgrades_weak_action_items(self) -> None:
         """약한 action 후보는 삭제하지 않고 논의 메모로 낮춥니다."""
