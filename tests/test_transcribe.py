@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -326,6 +327,99 @@ class TranscribeTests(unittest.TestCase):
             self.assertEqual(transcribe.transcribe_audio(Path("two.wav")), "two")
 
         self.assertEqual(pipeline_load_count, 1)
+
+    def test_local_gpu_whisper_converts_m4a_to_wav_before_pipeline(self) -> None:
+        """Transformers pipeline에 m4a를 직접 넘기지 않고 임시 WAV를 전달합니다."""
+        inference_calls: list[str] = []
+
+        class FakeCuda:
+            def is_available(self) -> bool:
+                return True
+
+        class FakePipeline:
+            def __call__(self, audio_path: str, return_timestamps: bool, generate_kwargs: dict[str, str]):
+                inference_calls.append(audio_path)
+                return {"text": " converted transcript "}
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = "float16"
+        fake_torch.bfloat16 = "bfloat16"
+        fake_torch.float32 = "float32"
+        fake_torch.cuda = FakeCuda()
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.pipeline = lambda **_kwargs: FakePipeline()
+        config = transformers_whisper.LocalGpuWhisperConfig(
+            model_name="openai/whisper-large-v3-turbo",
+            device="cuda:0",
+            torch_dtype="float16",
+            max_concurrency=1,
+        )
+
+        with patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}), patch.object(
+            transformers_whisper.subprocess,
+            "run",
+        ) as run_mock:
+            transcript = transformers_whisper.transcribe_file(Path("meeting.m4a"), config=config)
+
+        self.assertEqual(transcript, "converted transcript")
+        run_mock.assert_called_once()
+        ffmpeg_command = run_mock.call_args.args[0]
+        self.assertEqual(ffmpeg_command[:4], ["ffmpeg", "-y", "-i", "meeting.m4a"])
+        self.assertIn("-ac", ffmpeg_command)
+        self.assertIn("1", ffmpeg_command)
+        self.assertIn("-ar", ffmpeg_command)
+        self.assertIn("16000", ffmpeg_command)
+        self.assertEqual(len(inference_calls), 1)
+        self.assertTrue(inference_calls[0].endswith(".wav"))
+        self.assertNotEqual(inference_calls[0], "meeting.m4a")
+        self.assertFalse(Path(inference_calls[0]).exists())
+
+    def test_local_gpu_whisper_uses_wav_input_without_conversion(self) -> None:
+        """이미 WAV인 chunk는 기존 경로를 그대로 pipeline에 넘깁니다."""
+        inference_calls: list[str] = []
+
+        class FakeCuda:
+            def is_available(self) -> bool:
+                return True
+
+        class FakePipeline:
+            def __call__(self, audio_path: str, return_timestamps: bool, generate_kwargs: dict[str, str]):
+                inference_calls.append(audio_path)
+                return {"text": "wav transcript"}
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = "float16"
+        fake_torch.bfloat16 = "bfloat16"
+        fake_torch.float32 = "float32"
+        fake_torch.cuda = FakeCuda()
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.pipeline = lambda **_kwargs: FakePipeline()
+        config = transformers_whisper.LocalGpuWhisperConfig(
+            model_name="openai/whisper-large-v3-turbo",
+            device="cuda:0",
+            torch_dtype="float16",
+            max_concurrency=1,
+        )
+
+        with patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}), patch.object(
+            transformers_whisper.subprocess,
+            "run",
+        ) as run_mock:
+            transcript = transformers_whisper.transcribe_file(Path("meeting.wav"), config=config)
+
+        self.assertEqual(transcript, "wav transcript")
+        run_mock.assert_not_called()
+        self.assertEqual(inference_calls, ["meeting.wav"])
+
+    def test_local_gpu_whisper_ffmpeg_failure_is_actionable(self) -> None:
+        """ffmpeg 변환 실패는 원인 파악이 가능한 RuntimeError로 감쌉니다."""
+        with patch.object(
+            transformers_whisper.subprocess,
+            "run",
+            side_effect=subprocess.CalledProcessError(1, ["ffmpeg"], stderr="invalid input"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "ffmpeg failed to convert audio.*meeting.m4a.*invalid input"):
+                transformers_whisper.prepare_audio_for_transformers(Path("meeting.m4a"))
 
     def test_transcribe_audio_local_gpu_whisper_missing_dependency_fails_cleanly(self) -> None:
         """torch/transformers가 없으면 runtime 준비 방법을 포함한 명확한 오류를 냅니다."""

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -107,36 +109,87 @@ def get_resident_pipeline(config: LocalGpuWhisperConfig | None = None) -> Any:
 def transcribe_file(audio_path: Path, config: LocalGpuWhisperConfig | None = None) -> str:
     """resident Transformers Whisper pipeline으로 단일 오디오 파일을 전사합니다."""
     resolved_config = config or get_config()
-    transcriber = get_resident_pipeline(resolved_config)
-    semaphore = get_inference_semaphore(resolved_config.max_concurrency)
+    prepared_audio_path, cleanup_path = prepare_audio_for_transformers(audio_path)
+    try:
+        transcriber = get_resident_pipeline(resolved_config)
+        semaphore = get_inference_semaphore(resolved_config.max_concurrency)
 
-    logger.info(
-        "local_gpu_whisper_inference_wait path=%s model=%s max_concurrency=%s",
-        audio_path,
-        resolved_config.model_name,
-        resolved_config.max_concurrency,
-    )
-    with semaphore:
-        started_at = time.perf_counter()
-        result = transcriber(
-            str(audio_path),
-            return_timestamps=True,
-            generate_kwargs={
-                "language": resolved_config.language,
-                "task": resolved_config.task,
-            },
+        logger.info(
+            "local_gpu_whisper_inference_wait path=%s prepared_path=%s model=%s max_concurrency=%s",
+            audio_path,
+            prepared_audio_path,
+            resolved_config.model_name,
+            resolved_config.max_concurrency,
         )
-        elapsed_seconds = time.perf_counter() - started_at
+        with semaphore:
+            started_at = time.perf_counter()
+            result = transcriber(
+                str(prepared_audio_path),
+                return_timestamps=True,
+                generate_kwargs={
+                    "language": resolved_config.language,
+                    "task": resolved_config.task,
+                },
+            )
+            elapsed_seconds = time.perf_counter() - started_at
 
-    transcript = extract_transcript_text(result)
+        transcript = extract_transcript_text(result)
+        logger.info(
+            "local_gpu_whisper_inference_complete path=%s prepared_path=%s model=%s device=%s elapsed_seconds=%.3f",
+            audio_path,
+            prepared_audio_path,
+            resolved_config.model_name,
+            resolved_config.device,
+            elapsed_seconds,
+        )
+        return transcript
+    finally:
+        if cleanup_path is not None:
+            cleanup_path.unlink(missing_ok=True)
+
+
+def prepare_audio_for_transformers(audio_path: Path) -> tuple[Path, Path | None]:
+    """Transformers가 안정적으로 읽을 수 있도록 비-WAV 입력을 임시 WAV로 변환합니다."""
+    if audio_path.suffix.lower() == ".wav":
+        return audio_path, None
+
+    output_file = tempfile.NamedTemporaryFile(prefix="local_gpu_whisper_", suffix=".wav", delete=False)
+    output_path = Path(output_file.name)
+    output_file.close()
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(audio_path),
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        str(output_path),
+    ]
+    logger.info("local_gpu_whisper_audio_convert_start path=%s output_path=%s", audio_path, output_path)
+    started_at = time.perf_counter()
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        output_path.unlink(missing_ok=True)
+        raise RuntimeError("ffmpeg is required for STT_PROVIDER=local_gpu_whisper to decode uploaded audio files.") from exc
+    except subprocess.CalledProcessError as exc:
+        output_path.unlink(missing_ok=True)
+        error_output = (exc.stderr or exc.stdout or "").strip()
+        message = f"ffmpeg failed to convert audio for local_gpu_whisper: {audio_path}"
+        if error_output:
+            message = f"{message}: {error_output[-500:]}"
+        raise RuntimeError(message) from exc
+
     logger.info(
-        "local_gpu_whisper_inference_complete path=%s model=%s device=%s elapsed_seconds=%.3f",
+        "local_gpu_whisper_audio_convert_complete path=%s output_path=%s elapsed_seconds=%.3f",
         audio_path,
-        resolved_config.model_name,
-        resolved_config.device,
-        elapsed_seconds,
+        output_path,
+        time.perf_counter() - started_at,
     )
-    return transcript
+    return output_path, output_path
 
 
 def get_inference_semaphore(max_concurrency: int) -> BoundedSemaphore:
