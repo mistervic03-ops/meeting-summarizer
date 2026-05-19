@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -527,6 +527,7 @@ def transcribe_plain_chunks_concurrently(
     timing_stats: TranscriptionTimingStats,
     model_name: str,
     concurrency: int,
+    chunk_transcriber: Callable[[Path], str] | None = None,
 ) -> list[str]:
     """plain STT 청크를 제한된 동시성으로 처리하고 원래 순서대로 반환합니다."""
     total_chunks = len(files_to_transcribe)
@@ -548,13 +549,16 @@ def transcribe_plain_chunks_concurrently(
             path=audio_file,
         )
         try:
-            transcript = transcribe_chunk(
-                audio_file,
-                chunk_config=chunk_config,
-                source_files=source_files,
-                timing_stats=timing_stats,
-                model_name=model_name,
-            )
+            if chunk_transcriber is None:
+                transcript = transcribe_chunk(
+                    audio_file,
+                    chunk_config=chunk_config,
+                    source_files=source_files,
+                    timing_stats=timing_stats,
+                    model_name=model_name,
+                )
+            else:
+                transcript = chunk_transcriber(audio_file)
         except Exception as exc:
             log_trace_event(
                 "plain_chunk_worker_failed",

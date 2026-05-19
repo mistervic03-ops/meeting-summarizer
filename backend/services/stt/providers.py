@@ -140,6 +140,115 @@ class LocalWhisperProvider:
         return transcript
 
 
+class LocalGpuWhisperProvider:
+    """Transformers Whisper resident GPU 모델로 plain STT를 수행하는 provider입니다."""
+
+    name = "local_gpu_whisper"
+
+    def transcribe(
+        self,
+        audio_files: Path | list[Path],
+        mode: TranscriptionMode = "plain",
+    ) -> str | NormalizedTranscript:
+        """기존 plain chunk workflow를 유지하며 local GPU Whisper로 전사합니다."""
+        if mode != "plain":
+            raise NotImplementedError("STT_PROVIDER=local_gpu_whisper only supports plain transcription for now.")
+
+        from backend.services.stt import transformers_whisper
+        from transcribe import (
+            TranscriptionTimingStats,
+            cleanup_temp_files,
+            get_audio_chunk_config,
+            get_plain_transcription_concurrency,
+            log_trace_event,
+            log_transcription_run_diagnostics,
+            normalize_audio_files as normalize_transcribe_audio_files,
+            prepare_audio_files,
+            transcribe_plain_chunks_concurrently,
+        )
+
+        config = transformers_whisper.get_config()
+        workflow_started_at = time.perf_counter()
+        chunk_config = get_audio_chunk_config("plain")
+        concurrency = get_plain_transcription_concurrency()
+        timing_stats = TranscriptionTimingStats(
+            mode="plain",
+            model_name=config.model_name,
+            chunk_config=chunk_config,
+            workflow_started_at=workflow_started_at,
+            concurrency=concurrency,
+        )
+        temp_files: list[Path] = []
+
+        logger.info(
+            "stt_provider_selected provider=%s model=%s device=%s torch_dtype=%s gpu_max_concurrency=%s",
+            self.name,
+            config.model_name,
+            config.device,
+            config.torch_dtype,
+            config.max_concurrency,
+        )
+        log_trace_event(
+            "transcription_workflow_start",
+            mode="plain",
+            resolved_model=timing_stats.model_name,
+            path=audio_files if isinstance(audio_files, Path) else "multiple",
+            chunk_duration_seconds=chunk_config.duration_seconds,
+            chunk_overlap_seconds=chunk_config.overlap_seconds,
+            concurrency=concurrency,
+            provider=self.name,
+        )
+
+        try:
+            preparation_started_at = time.perf_counter()
+            files_to_transcribe = prepare_audio_files(audio_files, mode="plain", model_name=config.model_name)
+            timing_stats.preparation_seconds = time.perf_counter() - preparation_started_at
+            original_files = normalize_transcribe_audio_files(audio_files)
+            temp_files.extend(file for file in files_to_transcribe if file not in original_files)
+            timing_stats.total_chunks = len(files_to_transcribe)
+            log_transcription_run_diagnostics(
+                mode="plain",
+                model_name=timing_stats.model_name,
+                source_files=original_files,
+                chunk_files=files_to_transcribe,
+                chunk_config=chunk_config,
+            )
+
+            transcripts = transcribe_plain_chunks_concurrently(
+                files_to_transcribe=files_to_transcribe,
+                chunk_config=chunk_config,
+                source_files=original_files,
+                timing_stats=timing_stats,
+                model_name=config.model_name,
+                concurrency=concurrency,
+                chunk_transcriber=lambda audio_path: transformers_whisper.transcribe_file(audio_path, config=config),
+            )
+
+            merge_started_at = time.perf_counter()
+            log_trace_event("merge_start", mode="plain", chunk_count=len(transcripts), provider=self.name)
+            transcript_text = "\n\n".join(transcript.strip() for transcript in transcripts if transcript.strip())
+            timing_stats.merge_seconds = time.perf_counter() - merge_started_at
+            log_trace_event("merge_complete", mode="plain", elapsed_seconds=timing_stats.merge_seconds, provider=self.name)
+            log_trace_event(
+                "transcription_complete",
+                mode="plain",
+                total_elapsed_seconds=time.perf_counter() - timing_stats.workflow_started_at,
+                provider=self.name,
+            )
+            return transcript_text
+        except Exception as exc:
+            log_trace_event(
+                "transcription_workflow_failed",
+                mode="plain",
+                elapsed_seconds=time.perf_counter() - workflow_started_at,
+                provider=self.name,
+                error=exc,
+            )
+            raise RuntimeError(f"Local GPU Whisper transcription failed: {exc}") from exc
+        finally:
+            cleanup_temp_files(temp_files)
+
+
 def get_stt_provider_name() -> str:
     """환경 변수에서 STT provider 이름을 읽고 기본값 openai를 반환합니다."""
     return os.getenv("STT_PROVIDER", "openai").strip().lower() or "openai"
@@ -193,4 +302,6 @@ def get_stt_provider(
         return OpenAITranscribeProvider(openai_implementation)
     if provider_name == "local_whisper":
         return LocalWhisperProvider()
-    raise ValueError("Unsupported STT_PROVIDER. Use 'openai' or 'local_whisper'.")
+    if provider_name == "local_gpu_whisper":
+        return LocalGpuWhisperProvider()
+    raise ValueError("Unsupported STT_PROVIDER. Use 'openai', 'local_whisper', or 'local_gpu_whisper'.")
