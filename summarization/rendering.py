@@ -17,6 +17,8 @@ from summarization.validation import (
 
 
 DISCUSSION_NOTE_PREFIX = "논의 메모:"
+GENERATED_MINUTES_TITLE_PATTERN = re.compile(r"^\s*#{1,2}\s*(?:전체\s+)?회의록\s*$")
+MARKDOWN_HORIZONTAL_RULE_PATTERN = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
 
 
 def render_output(structure: dict[str, Any], minutes_text: str, meeting_type: str = "general") -> str:
@@ -44,7 +46,7 @@ def render_output(structure: dict[str, Any], minutes_text: str, meeting_type: st
         if not skipping_action_items:
             kept_lines.append(line)
 
-    deduplicated_minutes = "\n".join(kept_lines).strip()
+    deduplicated_minutes = normalize_generated_minutes_markdown("\n".join(kept_lines))
     sections = []
 
     summary_title = get_summary_section_title(resolved_meeting_type)
@@ -80,6 +82,21 @@ def render_output(structure: dict[str, Any], minutes_text: str, meeting_type: st
 
     sections.append(f"## 📝 전체 회의록\n{deduplicated_minutes.strip() or '회의록 없음'}")
     return "\n\n".join(section for section in sections if section.strip()).strip()
+
+
+def normalize_generated_minutes_markdown(minutes_text: str) -> str:
+    """모델이 생성한 회의록 Markdown의 제목/구분선 artifact만 보수적으로 정리합니다."""
+    lines = as_text(minutes_text).splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and GENERATED_MINUTES_TITLE_PATTERN.match(lines[0]):
+        lines.pop(0)
+        while lines and not lines[0].strip():
+            lines.pop(0)
+
+    cleaned_lines = [line.rstrip() for line in lines if not MARKDOWN_HORIZONTAL_RULE_PATTERN.match(line)]
+    cleaned_text = "\n".join(cleaned_lines).strip()
+    return re.sub(r"\n{3,}", "\n\n", cleaned_text)
 
 
 def format_action_owner_for_display(owner: str) -> str:

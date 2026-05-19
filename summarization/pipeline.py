@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import sys
 import time
 from collections.abc import Sequence
@@ -13,10 +14,15 @@ from openai import OpenAI
 from summarization.chunk_pipeline import extract_structure_by_chunks
 from summarization.extraction import extract_structure
 from summarization.glossary import get_summary_glossary_terms
-from summarization.llm_provider import get_summarization_provider, request_claude_minutes_generation
+from summarization.llm_provider import (
+    get_claude_structure_model,
+    get_claude_summary_model,
+    get_summarization_provider,
+    request_claude_minutes_generation,
+)
 from summarization.models import CHUNK_STRATEGY, DEEP_STRATEGY, NormalizedTranscript, PreprocessedTranscript, SummaryResult
 from summarization.normalization import extract_meeting_date, normalize_transcript, preprocess_transcript
-from summarization.openai_utils import create_openai_client, extract_response_text, get_summary_model
+from summarization.openai_utils import create_openai_client, extract_response_text, get_structure_model, get_summary_model
 from summarization.policies import apply_extraction_policy, get_extraction_policy
 from summarization.profiling import analyze_transcript_profile, choose_processing_strategy, log_transcript_profile
 from summarization.prompts import MINUTES_SYSTEM_PROMPT, build_minutes_prompt, normalize_meeting_type
@@ -77,6 +83,18 @@ def summarize_transcript(
         selected_strategy = resolve_compat_name("choose_processing_strategy", choose_processing_strategy)(profile)
         resolve_compat_name("log_transcript_profile", log_transcript_profile)(profile, selected_strategy)
         logger.info("summarize_transcript selected_strategy=%s", selected_strategy)
+        provider = resolve_compat_name("get_summarization_provider", get_summarization_provider)()
+        structure_model = get_structure_model_for_provider(provider)
+        summary_model = get_summary_model_for_provider(provider)
+        transcript_chars = len(normalized_transcript.text)
+        logger.info(
+            "[SUMMARY_TIMING] provider=%s strategy=%s structure_model=%s summary_model=%s transcript_chars=%s",
+            provider,
+            selected_strategy,
+            structure_model,
+            summary_model,
+            transcript_chars,
+        )
 
         if selected_strategy in {CHUNK_STRATEGY, DEEP_STRATEGY}:
             if selected_strategy == DEEP_STRATEGY:
@@ -91,6 +109,7 @@ def summarize_transcript(
                 meeting_type=resolved_meeting_type,
                 glossary_terms=glossary_terms,
             )
+            extraction_stage = "chunk_extraction"
         else:
             logger.info("summarize_transcript using direct extraction path")
             structure, elapsed = run_stage(
@@ -102,7 +121,17 @@ def summarize_transcript(
                 resolved_meeting_type,
                 glossary_terms=glossary_terms,
             )
+            extraction_stage = "extraction"
         logger.info("extract_structure completed in %.3fs", elapsed)
+        logger.info(
+            "[SUMMARY_TIMING] provider=%s stage=%s model=%s transcript_chars=%s output_chars=%s elapsed_seconds=%.3f",
+            provider,
+            extraction_stage,
+            structure_model,
+            transcript_chars,
+            structure_output_length(structure),
+            elapsed,
+        )
 
         policy_result = resolve_compat_name("apply_extraction_policy", apply_extraction_policy)(structure, resolved_meeting_type)
         structure = policy_result.structure
@@ -131,6 +160,14 @@ def summarize_transcript(
             glossary_terms=glossary_terms,
         )
         logger.info("generate_minutes completed in %.3fs", elapsed)
+        logger.info(
+            "[SUMMARY_TIMING] provider=%s stage=minutes_generation model=%s transcript_chars=%s output_chars=%s elapsed_seconds=%.3f",
+            provider,
+            summary_model,
+            transcript_chars,
+            len(minutes),
+            elapsed,
+        )
 
         markdown, elapsed = run_stage(
             "render_output",
@@ -140,6 +177,7 @@ def summarize_transcript(
             resolved_meeting_type,
         )
         logger.info("render_output completed in %.3fs", elapsed)
+        logger.info("[SUMMARY_TIMING] stage=render_output output_chars=%s elapsed_seconds=%.3f", len(markdown), elapsed)
         logger.info("summarize_transcript completed in %.3fs", time.perf_counter() - total_started_at)
         return resolve_compat_name("build_summary_result", build_summary_result)(structure, markdown)
     except Exception as exc:
@@ -153,6 +191,28 @@ def run_timed_stage(stage_name: str, func: Any, *args: Any, **kwargs: Any) -> tu
         return func(*args, **kwargs), time.perf_counter() - started_at
     except Exception as exc:
         raise RuntimeError(f"{stage_name} failed: {exc}") from exc
+
+
+def get_structure_model_for_provider(provider: str) -> str:
+    """요약 provider별 구조 추출 모델명을 반환합니다."""
+    if provider == "claude":
+        return resolve_compat_name("get_claude_structure_model", get_claude_structure_model)()
+    return resolve_compat_name("get_structure_model", get_structure_model)()
+
+
+def get_summary_model_for_provider(provider: str) -> str:
+    """요약 provider별 회의록 생성 모델명을 반환합니다."""
+    if provider == "claude":
+        return resolve_compat_name("get_claude_summary_model", get_claude_summary_model)()
+    return resolve_compat_name("get_summary_model", get_summary_model)()
+
+
+def structure_output_length(structure: dict[str, Any]) -> int:
+    """구조화 추출 결과의 대략적인 출력 길이를 반환합니다."""
+    try:
+        return len(json.dumps(structure, ensure_ascii=False))
+    except TypeError:
+        return len(str(structure))
 
 
 def generate_minutes(

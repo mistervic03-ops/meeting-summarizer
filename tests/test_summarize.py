@@ -2977,6 +2977,51 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("- 담당자: 이서연 / 기한: 2026-05-20 / 할 일: 샘플 검수", output)
         self.assertNotIn("## 액션 아이템\n-", output)
 
+    def test_render_output_removes_generated_minutes_title_headings(self) -> None:
+        """모델이 생성한 최상단 회의록 제목은 backend wrapper와 중복되지 않게 제거합니다."""
+        structure = empty_track_b_structure()
+
+        for title in ("# 회의록", "## 회의록", "# 전체 회의록", "## 전체 회의록"):
+            with self.subTest(title=title):
+                output = summarize.render_output(structure, f"{title}\n\n## 회의 요약\n내용")
+                full_minutes = output.split("## 📝 전체 회의록\n", 1)[1]
+
+                self.assertTrue(full_minutes.startswith("## 회의 요약\n내용"))
+                self.assertNotIn(title, full_minutes)
+
+    def test_render_output_removes_horizontal_rule_only_lines(self) -> None:
+        """모델이 생성한 Markdown 구분선 전용 줄은 최종 회의록에서 제거합니다."""
+        structure = empty_track_b_structure()
+        minutes = """
+# 회의록
+---
+
+## 회의 요약
+내용
+
+----
+
+## 주요 결정사항
+- 진행합니다.
+***
+___
+""".strip()
+
+        output = summarize.render_output(structure, minutes)
+        full_minutes = output.split("## 📝 전체 회의록\n", 1)[1]
+
+        self.assertNotRegex(full_minutes, r"(?m)^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
+        self.assertIn("## 회의 요약\n내용", full_minutes)
+        self.assertIn("## 주요 결정사항\n- 진행합니다.", full_minutes)
+
+    def test_normalize_generated_minutes_markdown_preserves_regular_content(self) -> None:
+        """회의록 Markdown 정리는 의미 있는 heading, bullet, table-like text를 바꾸지 않습니다."""
+        from summarization.rendering import normalize_generated_minutes_markdown
+
+        minutes = "## 회의 요약\n\n- 첫 번째 내용\n\n| 항목 | 내용 |\n| --- | --- |\n| A | B |"
+
+        self.assertEqual(normalize_generated_minutes_markdown(minutes), minutes)
+
     def test_build_summary_result_keeps_unresolved_owner_value_for_api(self) -> None:
         """Markdown 표시와 달리 공개 구조화 결과의 owner 값은 호환성을 위해 미정으로 유지합니다."""
         structure = {
