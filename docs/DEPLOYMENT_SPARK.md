@@ -30,6 +30,38 @@ STT_PROVIDER=openai
 SUMMARIZATION_PROVIDER=openai
 ```
 
+## 배포 모드
+
+안정 운영 배포는 기존 compose 파일만 사용합니다. 이 경로는 OpenAI STT baseline이며 rollback 기준입니다.
+
+```bash
+docker compose up -d
+```
+
+local GPU Whisper backend는 별도 overlay로만 실행합니다. 이 overlay는 backend image만 NGC PyTorch runtime으로 바꾸고 `STT_PROVIDER=local_gpu_whisper`를 설정합니다. 프론트엔드, 네트워크, 포트, volume, `.env` 로딩 방식은 기존 compose 설정을 그대로 따릅니다.
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.local-gpu.yml \
+  up -d --build
+```
+
+local GPU variant의 현재 전제:
+
+- 단일 FastAPI process/worker
+- 프로세스 안의 resident shared Whisper model
+- `LOCAL_GPU_MAX_CONCURRENCY` 기반 GPU inference semaphore
+- plain STT path 우선
+- diarized mode와 OpenAI provider는 변경하지 않음
+
+rollback은 overlay 없이 안정 compose를 다시 적용하면 됩니다.
+
+```bash
+docker compose down
+docker compose up -d
+```
+
 ## 현재 실행 구조
 
 - 백엔드: FastAPI 앱 `backend.main:app`
@@ -80,6 +112,7 @@ CPU local Whisper에서 관찰한 문제:
 - production default는 계속 `STT_PROVIDER=openai`입니다.
 - transcription mode default는 계속 `plain`입니다.
 - `STT_PROVIDER=local_whisper`는 실험용으로 유지합니다.
+- `STT_PROVIDER=local_gpu_whisper`는 `docker-compose.local-gpu.yml` overlay에서만 켭니다.
 - diarized mode는 화자별 검토가 필요한 경우를 위한 고급/실험 옵션으로 유지합니다.
 - local Whisper GPU 통합은 먼저 plain path에서 평가하고, production integration 여부는 별도 판단합니다.
 
