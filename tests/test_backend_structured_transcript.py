@@ -175,10 +175,26 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         ) as transcribe_mock:
             run_transcription_pipeline(job.id, Path("meeting.wav"), meeting_type="execution")
 
-        transcribe_mock.assert_called_once_with(Path("meeting.wav"), progress_callback=ANY)
+        transcribe_mock.assert_called_once_with(Path("meeting.wav"), progress_callback=ANY, stt_provider=None)
         self.assertEqual(storage.get_job(job.id).result.transcript, "plain transcript")
         self.assertEqual(storage.get_job(job.id).meeting_type, "execution")
         self.assertIsNone(storage.get_job(job.id).result.structured_transcript)
+
+    def test_transcription_pipeline_passes_requested_stt_provider(self) -> None:
+        """업로드 요청의 STT provider 선택은 전사 호출까지 전달됩니다."""
+        job = storage.create_job("meeting.wav")
+
+        with patch("backend.services.pipeline.transcribe_audio", return_value="cloud transcript") as transcribe_mock:
+            run_transcription_pipeline(
+                job.id,
+                Path("meeting.wav"),
+                transcription_mode="plain",
+                meeting_type="execution",
+                stt_provider="openai",
+            )
+
+        transcribe_mock.assert_called_once_with(Path("meeting.wav"), progress_callback=ANY, stt_provider="openai")
+        self.assertEqual(storage.get_job(job.id).result.transcript, "cloud transcript")
 
     def test_transcription_pipeline_diarized_mode_stores_plain_and_structured_transcript(self) -> None:
         """diarized mode는 plain text와 structured transcript를 함께 저장합니다."""
@@ -217,7 +233,7 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
 
         self.assertEqual(transcribe_mock.call_args_list[0].kwargs, {"mode": "diarized"})
         self.assertEqual(transcribe_mock.call_args_list[1].args, (Path("meeting.wav"),))
-        self.assertEqual(transcribe_mock.call_args_list[1].kwargs, {"progress_callback": ANY})
+        self.assertEqual(transcribe_mock.call_args_list[1].kwargs, {"progress_callback": ANY, "stt_provider": None})
         result = storage.get_job(job.id).result
         self.assertEqual(result.transcript, "plain fallback")
         self.assertIsNone(result.structured_transcript)

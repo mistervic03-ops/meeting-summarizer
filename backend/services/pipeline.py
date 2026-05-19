@@ -61,6 +61,7 @@ def run_transcription_pipeline(
     audio_path: Path,
     transcription_mode: str | None = None,
     meeting_type: str = "general",
+    stt_provider: str | None = None,
 ) -> None:
     """오디오 파일을 STT 처리하고 transcript 검토 화면에서 사용할 결과를 저장합니다."""
     resolved_mode = get_transcription_mode(transcription_mode)
@@ -81,6 +82,7 @@ def run_transcription_pipeline(
             audio_path,
             transcription_mode,
             progress_callback=build_chunk_progress_callback(job_id),
+            stt_provider=stt_provider,
         )
         stt_seconds = time.perf_counter() - stt_started_at
         mark_job_progress(job_id, 95, "Transcript 정리", "검토 화면에 표시할 transcript를 준비하고 있습니다.", stt_seconds=stt_seconds)
@@ -139,6 +141,7 @@ def transcribe_audio_for_review(
     audio_path: Path,
     transcription_mode: str | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
+    stt_provider: str | None = None,
 ) -> tuple[str, dict[str, Any] | None]:
     """설정된 STT mode에 따라 검토 화면용 plain/structured transcript를 생성합니다."""
     resolved_mode = get_transcription_mode(transcription_mode)
@@ -150,7 +153,7 @@ def transcribe_audio_for_review(
         TRANSCRIBE_RUNTIME_VERSION,
     )
     if resolved_mode != "diarized":
-        transcript = transcribe_audio(audio_path, progress_callback=progress_callback)
+        transcript = transcribe_audio(audio_path, progress_callback=progress_callback, stt_provider=stt_provider)
         return str(transcript), None
 
     try:
@@ -172,7 +175,7 @@ def transcribe_audio_for_review(
             exc,
             TRANSCRIBE_RUNTIME_VERSION,
         )
-        transcript = transcribe_audio(audio_path, progress_callback=progress_callback)
+        transcript = transcribe_audio(audio_path, progress_callback=progress_callback, stt_provider=stt_provider)
         return str(transcript), None
 
 

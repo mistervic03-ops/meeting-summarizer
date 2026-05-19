@@ -5,7 +5,7 @@ import ProgressPanel from "../components/ProgressPanel";
 import StatusPill from "../components/StatusPill";
 import ThemeToggle from "../components/ThemeToggle";
 import { useMeetingJob } from "../hooks/useMeetingJob";
-import type { MeetingType, TranscriptionMode } from "../api/types";
+import type { MeetingType, SttProviderMode } from "../api/types";
 import { DEFAULT_MEETING_TYPE, MEETING_TYPE_OPTIONS, getMeetingTypeLabel } from "../utils/meetingTypes";
 import ResultPage from "./ResultPage";
 import TranscriptPage from "./TranscriptPage";
@@ -13,7 +13,7 @@ import TranscriptPage from "./TranscriptPage";
 const AUDIO_ACCEPT = "audio/*,.m4a,.mp3,.mp4,.mpeg,.mpga,.wav,.webm";
 const CONTEXT_ACCEPT = ".md,.txt";
 const CONTEXT_HELP_TEXT = "회의명, 프로젝트 용어, 참석자 이름 등을 함께 넣으면\n약어·고유명사·담당자 인식 정확도를 높이는 데 도움이 됩니다.";
-const SPEAKER_MODE_HELP_TEXT = "실험적 고급 모드입니다.\n화자별 발화를 따로 검토해야 할 때만 사용하세요.";
+const CLOUD_MODE_HELP_TEXT = "OpenAI API 기반 클라우드 전사입니다.\n중요도가 높거나 로컬 결과 비교가 필요한 경우에만 사용하세요.";
 const TRANSCRIPTION_PROGRESS_STEPS = [
   { label: "업로드 준비", progress: 10 },
   { label: "음성 분석 준비", progress: 20 },
@@ -24,17 +24,19 @@ const TRANSCRIPTION_PROGRESS_STEPS = [
 const TRANSCRIPTION_MODES: Array<{
   description: string;
   label: string;
-  mode: TranscriptionMode;
+  mode: SttProviderMode;
+  recommended?: boolean;
 }> = [
   {
-    description: "회의 의미와 후속 작업 중심으로 준비합니다.",
-    label: "기본",
-    mode: "plain"
+    description: "Spark GPU에서 회의 의미와 후속 작업 중심으로 전사합니다.",
+    label: "기본 모드 / 로컬 GPU",
+    mode: "local_gpu_whisper",
+    recommended: true
   },
   {
-    description: "화자 구분이 필요한 경우에만 사용합니다.",
-    label: "화자 구분 실험",
-    mode: "diarized"
+    description: "클라우드 API 기반이며 비용이 발생할 수 있습니다.",
+    label: "고급 모드 / OpenAI API",
+    mode: "openai"
   }
 ];
 
@@ -45,7 +47,7 @@ export default function UploadPage() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [contextFile, setContextFile] = useState<File | null>(null);
   const [meetingType, setMeetingType] = useState<MeetingType>(DEFAULT_MEETING_TYPE);
-  const [transcriptionMode, setTranscriptionMode] = useState<TranscriptionMode>("plain");
+  const [sttProvider, setSttProvider] = useState<SttProviderMode>("local_gpu_whisper");
   const {
     completedFileName,
     error,
@@ -164,8 +166,8 @@ export default function UploadPage() {
                 <p className="mt-0.5 text-[11px] leading-4 text-slate-500">필요한 정리 방식을 선택하세요.</p>
               </div>
               <div className="divide-y divide-slate-100 border-y border-slate-300">
-                {TRANSCRIPTION_MODES.map(({ description, label, mode }) => {
-                  const selected = transcriptionMode === mode;
+                {TRANSCRIPTION_MODES.map(({ description, label, mode, recommended }) => {
+                  const selected = sttProvider === mode;
                   return (
                     <button
                       key={mode}
@@ -175,7 +177,7 @@ export default function UploadPage() {
                       ].join(" ")}
                       disabled={status === "processing" || status === "pending"}
                       type="button"
-                      onClick={() => setTranscriptionMode(mode)}
+                      onClick={() => setSttProvider(mode)}
                     >
                       <span
                         className={[
@@ -186,11 +188,16 @@ export default function UploadPage() {
                       <span className="min-w-0">
                         <span className="flex items-center gap-1.5 text-[13px] font-medium">
                           {label}
-                          {mode === "diarized" ? (
+                          {recommended ? (
+                            <span className="rounded-sm bg-brand-50 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700 dark:bg-app-accent-soft dark:text-app-accent">
+                              권장
+                            </span>
+                          ) : null}
+                          {mode === "openai" ? (
                             <span className="relative inline-flex text-slate-400">
                               <Info size={13} strokeWidth={2} />
                               <span className="pointer-events-none absolute left-0 top-full z-20 mt-1.5 hidden w-60 whitespace-pre-line rounded-md border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-normal leading-4 text-slate-600 shadow-sm group-focus:block group-hover:block dark:bg-app-popover">
-                                {SPEAKER_MODE_HELP_TEXT}
+                                {CLOUD_MODE_HELP_TEXT}
                               </span>
                             </span>
                           ) : null}
@@ -208,7 +215,7 @@ export default function UploadPage() {
                 className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-brand-600 px-4 text-sm font-medium text-white transition-colors duration-150 ease-out hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-200 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 disabled:opacity-80 dark:h-9 dark:bg-app-accent-button dark:px-3.5 dark:text-[13px] dark:hover:bg-app-accent-button-hover dark:focus-visible:ring-app-accent-border"
                 disabled={!canProcess}
                 type="button"
-                onClick={() => startTranscriptionJob({ audioFile, contextFile, meetingType, transcriptionMode })}
+                onClick={() => startTranscriptionJob({ audioFile, contextFile, meetingType, sttProvider })}
               >
                 {status === "processing" || status === "pending" ? (
                   <Loader2 className="animate-spin" size={16} />
@@ -263,7 +270,7 @@ export default function UploadPage() {
                 <div className="flex items-center justify-between gap-4 py-1.5">
                   <dt className="text-slate-500">처리 방식</dt>
                   <dd className="break-words text-right font-medium text-slate-950">
-                    {transcriptionMode === "plain" ? "기본" : "화자 구분 실험"}
+                    {sttProvider === "local_gpu_whisper" ? "로컬 GPU" : "OpenAI API"}
                   </dd>
                 </div>
               </dl>

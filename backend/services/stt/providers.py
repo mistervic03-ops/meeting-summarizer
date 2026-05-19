@@ -264,6 +264,11 @@ def get_stt_provider_name() -> str:
     return os.getenv("STT_PROVIDER", "openai").strip().lower() or "openai"
 
 
+def resolve_stt_provider_name(provider_name: str | None = None) -> str:
+    """요청별 STT provider override가 있으면 우선하고 없으면 환경 변수를 사용합니다."""
+    return (provider_name or get_stt_provider_name()).strip().lower()
+
+
 def get_local_whisper_model_name() -> str:
     """로컬 Whisper 모델명을 환경 변수 또는 안전한 CPU 기본값으로 반환합니다."""
     return os.getenv("LOCAL_WHISPER_MODEL", DEFAULT_LOCAL_WHISPER_MODEL).strip() or DEFAULT_LOCAL_WHISPER_MODEL
@@ -305,13 +310,14 @@ def import_whisper_model() -> Any:
 
 def get_stt_provider(
     openai_implementation: Callable[[Path | list[Path], TranscriptionMode, ChunkProgressCallback | None], str | NormalizedTranscript],
+    provider_name: str | None = None,
 ) -> TranscribeProvider:
     """STT_PROVIDER 값에 맞는 provider 객체를 반환합니다."""
-    provider_name = get_stt_provider_name()
-    if provider_name == "openai":
+    resolved_provider_name = resolve_stt_provider_name(provider_name)
+    if resolved_provider_name == "openai":
         return OpenAITranscribeProvider(openai_implementation)
-    if provider_name == "local_whisper":
+    if resolved_provider_name == "local_whisper":
         return LocalWhisperProvider()
-    if provider_name == "local_gpu_whisper":
+    if resolved_provider_name == "local_gpu_whisper":
         return LocalGpuWhisperProvider()
     raise ValueError("Unsupported STT_PROVIDER. Use 'openai', 'local_whisper', or 'local_gpu_whisper'.")

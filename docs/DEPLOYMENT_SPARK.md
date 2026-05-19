@@ -23,16 +23,16 @@ curl http://localhost:8000/api/health
 http://192.168.3.41:5173
 ```
 
-현재 안정 운영 모드는 OpenAI STT baseline입니다.
+현재 production-candidate 운영 모드는 local GPU Whisper STT입니다. OpenAI STT는 코드와 설정에 남아 있으며, UI에서는 고급/클라우드 모드로 선택합니다.
 
 ```env
-STT_PROVIDER=openai
+STT_PROVIDER=local_gpu_whisper
 SUMMARIZATION_PROVIDER=openai
 ```
 
 ## 배포 모드
 
-안정 운영 배포는 기존 compose 파일만 사용합니다. 이 경로는 OpenAI STT baseline이며 rollback 기준입니다.
+기존 `docker-compose.yml`은 안정 rollback 기준입니다. Spark/GB10 서버의 local GPU STT 운영은 아래 local GPU overlay를 함께 적용합니다.
 
 ```bash
 docker compose up -d
@@ -51,11 +51,15 @@ local GPU variant의 현재 전제:
 
 - 단일 FastAPI process/worker
 - 프로세스 안의 resident shared Whisper model
-- `LOCAL_GPU_MAX_CONCURRENCY` 기반 GPU inference semaphore
+- `LOCAL_GPU_MAX_CONCURRENCY=3` 기반 GPU inference semaphore
 - 기본 모델은 `openai/whisper-large-v3-turbo`
 - plain chunk size는 현재 `PLAIN_CHUNK_DURATION_SECONDS=300` 유지
 - plain STT path 우선
-- diarized mode와 OpenAI provider는 변경하지 않음
+- STT glossary/prompt bias는 기본 비활성화
+- 명백한 반복 붕괴 artifact stabilization 활성화
+- real chunk progress 활성화
+- OpenAI provider는 고급/클라우드 fallback으로 유지
+- diarized backend code는 legacy/experimental path로 유지하지만 UI의 주요 advanced option으로 노출하지 않음
 
 rollback은 overlay 없이 안정 compose를 다시 적용하면 됩니다.
 
@@ -68,7 +72,8 @@ docker compose up -d
 
 - 백엔드: FastAPI 앱 `backend.main:app`
 - 프론트엔드: React + TypeScript + Vite build, nginx production serving
-- STT baseline: OpenAI STT, `transcribe.py`
+- STT baseline: local GPU Whisper provider, `backend/services/stt/transformers_whisper.py`
+- OpenAI STT: advanced/cloud fallback provider, `transcribe.py`
 - 요약 baseline: OpenAI Responses API, `summarization/`
 - 작업 상태 저장: `backend/storage.py`의 인메모리 저장소
 - 업로드 파일 저장: OS 기본 임시 디렉터리 하위 `meeting_summarizer_api`
@@ -84,22 +89,24 @@ cp .env.example .env
 
 운영 baseline에 필요한 주요 값:
 
-- `STT_PROVIDER=openai`
+- `STT_PROVIDER=local_gpu_whisper`
 - `SUMMARIZATION_PROVIDER=openai`
 - `OPENAI_API_KEY`
-- `OPENAI_TRANSCRIPTION_MODEL`
 - `OPENAI_STRUCTURE_MODEL`
 - `OPENAI_SUMMARY_MODEL`
 - `CORS_ORIGINS`
+- `PLAIN_CHUNK_DURATION_SECONDS=300`
+- `LOCAL_GPU_MAX_CONCURRENCY=3`
+- `ENABLE_STT_VOCABULARY_HINTS=false`
 
-OpenAI STT와 요약 경로가 현재 안정 production default입니다. local GPU STT는 별도 compose overlay에서만 켜는 실험 운영 variant입니다.
+OpenAI 요약 경로는 유지합니다. OpenAI STT는 UI의 `고급 모드 / OpenAI API`에서 요청별로 선택할 수 있으며, 클라우드 API 비용이 발생할 수 있습니다.
 
 ## STT Provider 상태
 
 검증된 사실:
 
 - STT provider seam은 존재합니다.
-- `OpenAITranscribeProvider`는 현재 production baseline입니다.
+- `OpenAITranscribeProvider`는 advanced/cloud fallback으로 유지합니다.
 - `LocalWhisperProvider` CPU 경로는 기능적으로 동작합니다.
 - CPU local Whisper는 production 회의 전사 품질 기준에는 부족했습니다.
 
@@ -111,14 +118,16 @@ CPU local Whisper에서 관찰한 문제:
 
 운영 지침:
 
-- production default는 계속 `STT_PROVIDER=openai`입니다.
-- transcription mode default는 계속 `plain`입니다.
+- production-candidate default는 `STT_PROVIDER=local_gpu_whisper`입니다.
+- user-facing 기본 모드는 `기본 모드 / 로컬 GPU`입니다.
+- user-facing 고급/클라우드 모드는 `고급 모드 / OpenAI API`입니다.
+- backend transcription mode default는 계속 `plain`입니다.
 - `STT_PROVIDER=local_whisper`는 실험용으로 유지합니다.
-- `STT_PROVIDER=local_gpu_whisper`는 `docker-compose.local-gpu.yml` overlay에서만 켭니다.
-- diarized mode는 화자별 검토가 필요한 경우를 위한 고급/실험 옵션으로 유지합니다.
-- local GPU Whisper는 plain path와 resident shared model을 전제로 합니다. stable default 전환 여부는 별도 품질/운영 검증 후 판단합니다.
+- `STT_PROVIDER=local_gpu_whisper`는 Spark local GPU runtime의 기본 운영 경로입니다.
+- diarized mode는 backend에 남겨 두되 주요 UI 선택지로 홍보하지 않습니다.
+- local GPU Whisper는 plain path와 resident shared model을 전제로 합니다.
 - local GPU Whisper는 long-form transcript에서 드물게 발생하는 명백한 반복 붕괴 artifact를 보수적으로 줄입니다. 예: `오오오오오`, `KPI, KPI, KPI, KPI`, `. . . . .`.
-- glossary prompt_ids 경로는 품질/안정성 확인 전까지 기본 운영 판단에 의존하지 않습니다.
+- glossary prompt_ids 경로는 기본 비활성화합니다. 필요 시 별도 평가 후 `LOCAL_GPU_ENABLE_STT_PROMPT=true`로만 켭니다.
 
 ## GPU STT 평가 상태
 

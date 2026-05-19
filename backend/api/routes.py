@@ -63,10 +63,13 @@ async def create_transcription_job(
     context: str = Form(default=""),
     meeting_type: MeetingType = Form(default="execution"),
     transcription_mode: str = Form(default="plain"),
+    stt_provider: str = Form(default=""),
 ) -> JobCreateResponse:
     """업로드된 오디오를 STT 처리해 transcript 검토 작업을 시작합니다."""
     if transcription_mode not in {"plain", "diarized"}:
         raise HTTPException(status_code=400, detail="지원하지 않는 transcription mode입니다.")
+    if stt_provider and stt_provider not in {"local_gpu_whisper", "openai"}:
+        raise HTTPException(status_code=400, detail="지원하지 않는 STT provider입니다.")
 
     job = create_job(filename=audio_file.filename or "uploaded_audio")
 
@@ -80,7 +83,14 @@ async def create_transcription_job(
 
         set_job_context(job.id, context_text)
         set_job_meeting_type(job.id, meeting_type)
-        background_tasks.add_task(run_transcription_pipeline, job.id, audio_path, transcription_mode, meeting_type)
+        background_tasks.add_task(
+            run_transcription_pipeline,
+            job.id,
+            audio_path,
+            transcription_mode,
+            meeting_type,
+            stt_provider or None,
+        )
     except Exception as exc:
         mark_job_failed(job.id, f"업로드 파일을 처리하지 못했습니다: {exc}")
         raise HTTPException(status_code=400, detail=str(exc)) from exc

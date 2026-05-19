@@ -326,9 +326,14 @@ def transcribe_audio(
     audio_files: Path | list[Path],
     mode: Literal["plain", "diarized"] = "plain",
     progress_callback: Callable[[int, int], None] | None = None,
+    stt_provider: str | None = None,
 ) -> str | NormalizedTranscript:
     """설정된 STT provider로 하나 이상의 오디오 파일을 전사합니다."""
-    return get_stt_provider(_transcribe_audio_openai).transcribe(audio_files, mode=mode, progress_callback=progress_callback)
+    return get_stt_provider(_transcribe_audio_openai, provider_name=stt_provider).transcribe(
+        audio_files,
+        mode=mode,
+        progress_callback=progress_callback,
+    )
 
 
 def _transcribe_audio_openai(

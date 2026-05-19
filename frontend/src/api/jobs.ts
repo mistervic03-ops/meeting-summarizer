@@ -65,6 +65,7 @@ export async function createTranscriptionJob(payload: CreateTranscriptionJobPayl
   const formData = new FormData();
   formData.append("audio_file", payload.audioFile);
   formData.append("transcription_mode", payload.transcriptionMode ?? "plain");
+  formData.append("stt_provider", payload.sttProvider ?? "local_gpu_whisper");
   formData.append("meeting_type", payload.meetingType ?? "execution");
 
   if (payload.contextFile) {

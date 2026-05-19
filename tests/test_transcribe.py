@@ -161,6 +161,20 @@ class TranscribeTests(unittest.TestCase):
         self.assertEqual(transcript, "plain text")
         openai_mock.assert_called_once_with(audio_file, mode="plain", progress_callback=None)
 
+    def test_transcribe_audio_provider_override_takes_precedence_over_env(self) -> None:
+        """요청별 STT provider 지정은 환경 변수보다 우선합니다."""
+        audio_file = Path("meeting.wav")
+
+        with patch.dict(os.environ, {"STT_PROVIDER": "local_gpu_whisper"}, clear=True), patch.object(
+            transcribe,
+            "_transcribe_audio_openai",
+            return_value="cloud transcript",
+        ) as openai_mock:
+            transcript = transcribe.transcribe_audio(audio_file, stt_provider="openai")
+
+        self.assertEqual(transcript, "cloud transcript")
+        openai_mock.assert_called_once_with(audio_file, mode="plain", progress_callback=None)
+
     def test_transcribe_audio_local_whisper_uses_mocked_faster_whisper(self) -> None:
         """local_whisper provider는 faster-whisper 모델을 지연 로드해 plain transcript를 반환합니다."""
         created_models: list[tuple[str, str, str]] = []
@@ -330,6 +344,16 @@ class TranscribeTests(unittest.TestCase):
 
         self.assertEqual(pipeline_load_count, 1)
 
+    def test_local_gpu_whisper_config_defaults_to_turbo_and_concurrency_three(self) -> None:
+        """local_gpu_whisper 기본 설정은 운영 후보 baseline을 사용합니다."""
+        with patch.dict(os.environ, {}, clear=True):
+            config = transformers_whisper.get_config()
+
+        self.assertEqual(config.model_name, "openai/whisper-large-v3-turbo")
+        self.assertEqual(config.max_concurrency, 3)
+        self.assertEqual(config.device, "cuda:0")
+        self.assertEqual(config.torch_dtype, "float16")
+
     def test_local_gpu_whisper_initial_prompt_uses_only_organization_terms(self) -> None:
         """local_gpu_whisper prompt는 canonical organization_terms만 사용합니다."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -350,16 +374,38 @@ class TranscribeTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch.dict(os.environ, {"STT_VOCABULARY_PATH": str(vocabulary_file), "ENABLE_STT_VOCABULARY_HINTS": "true"}):
+            with patch.dict(
+                os.environ,
+                {
+                    "STT_VOCABULARY_PATH": str(vocabulary_file),
+                    "ENABLE_STT_VOCABULARY_HINTS": "true",
+                    "LOCAL_GPU_ENABLE_STT_PROMPT": "true",
+                },
+            ):
                 prompt = transformers_whisper.get_local_gpu_whisper_initial_prompt()
 
         self.assertEqual(prompt, "BigxData, Agent Works")
+
+    def test_local_gpu_whisper_initial_prompt_is_disabled_by_default(self) -> None:
+        """local_gpu_whisper STT prompt는 명시적으로 켜지 않으면 비활성화됩니다."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            vocabulary_file.write_text("organization_terms:\n  - BigxData\n", encoding="utf-8")
+
+            with patch.dict(os.environ, {"STT_VOCABULARY_PATH": str(vocabulary_file)}, clear=True):
+                prompt = transformers_whisper.get_local_gpu_whisper_initial_prompt()
+
+        self.assertEqual(prompt, "")
 
     def test_local_gpu_whisper_initial_prompt_missing_file_degrades_gracefully(self) -> None:
         """vocabulary 파일이 없어도 local_gpu_whisper prompt는 빈 값으로 안전하게 비활성화됩니다."""
         with patch.dict(
             os.environ,
-            {"STT_VOCABULARY_PATH": "/tmp/missing-local-gpu-stt-vocabulary.yaml", "ENABLE_STT_VOCABULARY_HINTS": "true"},
+            {
+                "STT_VOCABULARY_PATH": "/tmp/missing-local-gpu-stt-vocabulary.yaml",
+                "ENABLE_STT_VOCABULARY_HINTS": "true",
+                "LOCAL_GPU_ENABLE_STT_PROMPT": "true",
+            },
         ):
             prompt = transformers_whisper.get_local_gpu_whisper_initial_prompt()
 
@@ -431,7 +477,11 @@ class TranscribeTests(unittest.TestCase):
 
             with patch.dict(
                 os.environ,
-                {"STT_VOCABULARY_PATH": str(vocabulary_file), "ENABLE_STT_VOCABULARY_HINTS": "true"},
+                {
+                    "STT_VOCABULARY_PATH": str(vocabulary_file),
+                    "ENABLE_STT_VOCABULARY_HINTS": "true",
+                    "LOCAL_GPU_ENABLE_STT_PROMPT": "true",
+                },
             ), patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}):
                 transcript = transformers_whisper.transcribe_file(Path("meeting.wav"), config=config)
 
@@ -482,7 +532,11 @@ class TranscribeTests(unittest.TestCase):
 
             with patch.dict(
                 os.environ,
-                {"STT_VOCABULARY_PATH": str(vocabulary_file), "ENABLE_STT_VOCABULARY_HINTS": "true"},
+                {
+                    "STT_VOCABULARY_PATH": str(vocabulary_file),
+                    "ENABLE_STT_VOCABULARY_HINTS": "true",
+                    "LOCAL_GPU_ENABLE_STT_PROMPT": "true",
+                },
             ), patch.dict(sys.modules, {"torch": fake_torch}):
                 prompt_ids = transformers_whisper.build_whisper_prompt_ids(FakePipeline(), config)
 
@@ -531,7 +585,11 @@ class TranscribeTests(unittest.TestCase):
 
             with patch.dict(
                 os.environ,
-                {"STT_VOCABULARY_PATH": str(vocabulary_file), "ENABLE_STT_VOCABULARY_HINTS": "true"},
+                {
+                    "STT_VOCABULARY_PATH": str(vocabulary_file),
+                    "ENABLE_STT_VOCABULARY_HINTS": "true",
+                    "LOCAL_GPU_ENABLE_STT_PROMPT": "true",
+                },
             ), patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}):
                 transcript = transformers_whisper.transcribe_file(Path("meeting.wav"), config=config)
 

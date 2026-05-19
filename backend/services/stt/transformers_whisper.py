@@ -18,9 +18,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_LOCAL_GPU_WHISPER_MODEL = "openai/whisper-large-v3-turbo"
 DEFAULT_LOCAL_GPU_DEVICE = "cuda:0"
 DEFAULT_LOCAL_GPU_TORCH_DTYPE = "float16"
-DEFAULT_LOCAL_GPU_MAX_CONCURRENCY = 4
+DEFAULT_LOCAL_GPU_MAX_CONCURRENCY = 3
 DEFAULT_LOCAL_GPU_LANGUAGE = "ko"
 DEFAULT_LOCAL_GPU_TASK = "transcribe"
+DEFAULT_LOCAL_GPU_STT_PROMPT_ENABLED = "false"
 MAX_LOCAL_GPU_WHISPER_PROMPT_CHARS = 500
 MIN_REPETITION_COLLAPSE_COUNT = 4
 
@@ -277,7 +278,7 @@ def get_local_gpu_whisper_initial_prompt() -> str:
     try:
         from transcribe import get_stt_vocabulary_path, stt_vocabulary_hints_enabled
 
-        enabled = stt_vocabulary_hints_enabled()
+        enabled = local_gpu_stt_prompt_enabled() and stt_vocabulary_hints_enabled()
         vocabulary_path = get_stt_vocabulary_path()
     except Exception as exc:
         logger.warning("local_gpu_whisper_prompt_config_failed error=%s", exc)
@@ -299,6 +300,16 @@ def get_local_gpu_whisper_initial_prompt() -> str:
             prompt = build_canonical_terms_prompt(terms)
         _initial_prompt_cache[cache_key] = prompt
         return prompt
+
+
+def local_gpu_stt_prompt_enabled() -> bool:
+    """local GPU Whisper initial prompt 사용 여부를 local runtime 전용 env로 판단합니다."""
+    return os.getenv("LOCAL_GPU_ENABLE_STT_PROMPT", DEFAULT_LOCAL_GPU_STT_PROMPT_ENABLED).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def load_organization_terms(vocabulary_path: Path) -> list[str]:

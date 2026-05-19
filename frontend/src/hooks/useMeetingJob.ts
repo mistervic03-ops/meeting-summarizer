@@ -8,7 +8,7 @@ import {
   getJobStatus,
   getTranscriptResult
 } from "../api/jobs";
-import { JobResult, JobStatus, JobStatusResponse, MeetingType, StructuredTranscript, TranscriptResult, TranscriptionMode } from "../api/types";
+import { JobResult, JobStatus, JobStatusResponse, MeetingType, SttProviderMode, StructuredTranscript, TranscriptResult, TranscriptionMode } from "../api/types";
 
 const POLLING_INTERVAL_MS = 1500;
 const ACTIVE_JOB_STORAGE_KEY = "meeting_summarizer.active_job";
@@ -24,6 +24,7 @@ interface StartMeetingJobPayload {
   audioFile: File | null;
   contextFile: File | null;
   meetingType?: MeetingType;
+  sttProvider?: SttProviderMode;
   transcriptionMode?: TranscriptionMode;
 }
 
@@ -151,7 +152,13 @@ export function useMeetingJob() {
   /**
    * Uploads the selected audio and waits until the transcript is ready for review.
    */
-  async function startTranscriptionJob({ audioFile, contextFile, meetingType = "execution", transcriptionMode = "plain" }: StartMeetingJobPayload) {
+  async function startTranscriptionJob({
+    audioFile,
+    contextFile,
+    meetingType = "execution",
+    sttProvider = "local_gpu_whisper",
+    transcriptionMode = "plain"
+  }: StartMeetingJobPayload) {
     if (!audioFile) {
       setError("회의 녹음 파일을 먼저 선택해 주세요.");
       return;
@@ -166,7 +173,7 @@ export function useMeetingJob() {
     setStatus("pending");
 
     try {
-      const createdJob = await createTranscriptionJob({ audioFile, contextFile, meetingType, transcriptionMode });
+      const createdJob = await createTranscriptionJob({ audioFile, contextFile, meetingType, sttProvider, transcriptionMode });
       saveActiveJobSnapshot({ jobId: createdJob.job_id, kind: "transcript" });
       await pollTranscriptUntilComplete(createdJob.job_id);
     } catch (caughtError) {
