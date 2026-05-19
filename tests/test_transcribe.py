@@ -159,7 +159,7 @@ class TranscribeTests(unittest.TestCase):
             transcript = transcribe.transcribe_audio(audio_file)
 
         self.assertEqual(transcript, "plain text")
-        openai_mock.assert_called_once_with(audio_file, mode="plain")
+        openai_mock.assert_called_once_with(audio_file, mode="plain", progress_callback=None)
 
     def test_transcribe_audio_local_whisper_uses_mocked_faster_whisper(self) -> None:
         """local_whisper provider는 faster-whisper 모델을 지연 로드해 plain transcript를 반환합니다."""
@@ -944,6 +944,31 @@ class TranscribeTests(unittest.TestCase):
 
         self.assertEqual(call_order, ["chunk_001.wav", "chunk_002.wav", "chunk_003.wav"])
         self.assertEqual(transcripts, ["chunk_001", "chunk_002", "chunk_003"])
+
+    def test_plain_concurrency_reports_chunk_progress(self) -> None:
+        """plain chunk workflow는 총 청크 수와 완료 청크 수를 callback으로 알립니다."""
+        progress_events: list[tuple[int, int]] = []
+        chunks = [Path("chunk_001.wav"), Path("chunk_002.wav")]
+        stats = transcribe.TranscriptionTimingStats(
+            mode="plain",
+            model_name="mock-stt",
+            chunk_config=transcribe.AudioChunkConfig(duration_seconds=300, overlap_seconds=0),
+            concurrency=1,
+        )
+
+        with patch.object(transcribe, "transcribe_chunk", side_effect=lambda audio_file, **kwargs: audio_file.stem):
+            transcripts = transcribe.transcribe_plain_chunks_concurrently(
+                files_to_transcribe=chunks,
+                chunk_config=stats.chunk_config,
+                source_files=[Path("meeting.wav")],
+                timing_stats=stats,
+                model_name="mock-stt",
+                concurrency=1,
+                chunk_progress_callback=lambda completed, total: progress_events.append((completed, total)),
+            )
+
+        self.assertEqual(transcripts, ["chunk_001", "chunk_002"])
+        self.assertEqual(progress_events, [(0, 2), (1, 2), (2, 2)])
 
     def test_plain_concurrency_preserves_original_chunk_order(self) -> None:
         """늦게 끝난 chunk가 있어도 최종 transcript 순서는 원본 chunk 순서를 따릅니다."""

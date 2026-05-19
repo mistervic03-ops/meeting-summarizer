@@ -32,7 +32,7 @@ export default function ProgressPanel({
   steps = DEFAULT_STEPS,
   status
 }: ProgressPanelProps) {
-  const reportedProgress = status === "idle" ? 0 : jobStatus?.progress ?? 5;
+  const reportedProgress = getReportedProgress(status, jobStatus);
   const [visibleProgress, setVisibleProgress] = useState(reportedProgress);
   const reportedStage = jobStatus?.stage ?? (status === "idle" ? idleStage : pendingStage);
   const progress = getVisibleProgress(status, visibleProgress, reportedProgress, reportedStage);
@@ -64,7 +64,7 @@ export default function ProgressPanel({
 
     const intervalId = window.setInterval(() => {
       setVisibleProgress((currentProgress) => {
-        const cap = getOptimisticProgressCap(jobStatus?.stage ?? "", status);
+        const cap = getOptimisticProgressCap(jobStatus, status);
         if (currentProgress >= cap) {
           return currentProgress;
         }
@@ -143,6 +143,20 @@ export default function ProgressPanel({
 
 type StepState = "active" | "done" | "pending";
 
+function getReportedProgress(status: JobStatus, jobStatus: JobStatusResponse | null): number {
+  if (status === "idle") {
+    return 0;
+  }
+  if (status === "completed") {
+    return 100;
+  }
+  const chunkProgress = isChunkProgressActive(jobStatus) ? getChunkProgress(jobStatus) : null;
+  if (chunkProgress !== null) {
+    return chunkProgress;
+  }
+  return jobStatus?.progress ?? 5;
+}
+
 function getMinimumProgress(status: JobStatus, reportedProgress: number, stage: string): number {
   if (status === "completed") {
     return 100;
@@ -178,10 +192,16 @@ function getVisibleProgress(status: JobStatus, visibleProgress: number, reported
   return Math.max(getMinimumProgress(status, reportedProgress, stage), Math.min(visibleProgress, 99));
 }
 
-function getOptimisticProgressCap(stage: string, status: JobStatus): number {
+function getOptimisticProgressCap(jobStatus: JobStatusResponse | null, status: JobStatus): number {
   if (status === "pending") {
     return 15;
   }
+  const chunkProgress = isChunkProgressActive(jobStatus) ? getChunkProgress(jobStatus) : null;
+  if (chunkProgress !== null) {
+    return Math.min(70, chunkProgress + 2);
+  }
+
+  const stage = jobStatus?.stage ?? "";
   if (stage.includes("회의록 작성") || stage.includes("요약")) {
     return 90;
   }
@@ -223,11 +243,24 @@ function getFriendlyStage(stage: string, status: JobStatus): string {
 }
 
 function getChunkDetail(jobStatus: JobStatusResponse | null): string {
-  if (jobStatus?.completed_chunks == null || !jobStatus.total_chunks || jobStatus.total_chunks <= 1) {
+  if (!isChunkProgressActive(jobStatus) || jobStatus?.completed_chunks == null || !jobStatus.total_chunks || jobStatus.total_chunks <= 1) {
     return "";
   }
 
-  return `음성 변환 중 · ${jobStatus.completed_chunks}/${jobStatus.total_chunks} 구간 처리됨`;
+  return `음성 변환 중 · ${jobStatus.completed_chunks}/${jobStatus.total_chunks} 구간 완료`;
+}
+
+function getChunkProgress(jobStatus: JobStatusResponse | null): number | null {
+  if (jobStatus?.completed_chunks == null || !jobStatus.total_chunks || jobStatus.total_chunks <= 0) {
+    return null;
+  }
+
+  const completedRatio = Math.max(0, Math.min(jobStatus.completed_chunks, jobStatus.total_chunks)) / jobStatus.total_chunks;
+  return 20 + Math.round(completedRatio * 50);
+}
+
+function isChunkProgressActive(jobStatus: JobStatusResponse | null): boolean {
+  return Boolean(jobStatus?.stage.includes("음성 변환") && jobStatus.status !== "completed");
 }
 
 /**

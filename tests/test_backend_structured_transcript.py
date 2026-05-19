@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -143,6 +143,20 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
 
         self.assertEqual(storage.get_job(job.id).meeting_type, "technical_review")
 
+    def test_storage_tracks_chunk_progress(self) -> None:
+        """storage는 사용자용 STT 청크 진행률을 저장합니다."""
+        job = storage.create_job("meeting.wav")
+
+        storage.mark_job_processing(job.id)
+        storage.mark_job_chunk_progress(job.id, completed_chunks=2, total_chunks=5)
+
+        updated_job = storage.get_job(job.id)
+        self.assertEqual(updated_job.completed_chunks, 2)
+        self.assertEqual(updated_job.total_chunks, 5)
+        self.assertEqual(updated_job.progress, 40)
+        self.assertEqual(updated_job.stage, "음성 변환")
+        self.assertIn("2/5 구간 완료", updated_job.message)
+
     def test_backend_pipeline_builds_normalized_transcript_from_structured_payload(self) -> None:
         """backend pipeline helper는 structured payload를 내부 NormalizedTranscript로 바꿉니다."""
         normalized = build_normalized_transcript_from_structured_payload(structured_payload_dict())
@@ -161,7 +175,7 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         ) as transcribe_mock:
             run_transcription_pipeline(job.id, Path("meeting.wav"), meeting_type="execution")
 
-        transcribe_mock.assert_called_once_with(Path("meeting.wav"))
+        transcribe_mock.assert_called_once_with(Path("meeting.wav"), progress_callback=ANY)
         self.assertEqual(storage.get_job(job.id).result.transcript, "plain transcript")
         self.assertEqual(storage.get_job(job.id).meeting_type, "execution")
         self.assertIsNone(storage.get_job(job.id).result.structured_transcript)
@@ -203,6 +217,7 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
 
         self.assertEqual(transcribe_mock.call_args_list[0].kwargs, {"mode": "diarized"})
         self.assertEqual(transcribe_mock.call_args_list[1].args, (Path("meeting.wav"),))
+        self.assertEqual(transcribe_mock.call_args_list[1].kwargs, {"progress_callback": ANY})
         result = storage.get_job(job.id).result
         self.assertEqual(result.transcript, "plain fallback")
         self.assertIsNone(result.structured_transcript)

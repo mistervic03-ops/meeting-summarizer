@@ -325,14 +325,16 @@ logger.warning("%s transcribe_import runtime_version=%s file=%s", get_trace_pref
 def transcribe_audio(
     audio_files: Path | list[Path],
     mode: Literal["plain", "diarized"] = "plain",
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> str | NormalizedTranscript:
     """설정된 STT provider로 하나 이상의 오디오 파일을 전사합니다."""
-    return get_stt_provider(_transcribe_audio_openai).transcribe(audio_files, mode=mode)
+    return get_stt_provider(_transcribe_audio_openai).transcribe(audio_files, mode=mode, progress_callback=progress_callback)
 
 
 def _transcribe_audio_openai(
     audio_files: Path | list[Path],
     mode: Literal["plain", "diarized"] = "plain",
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> str | NormalizedTranscript:
     """하나 이상의 오디오 파일을 전사하고 전사문을 하나로 합칩니다."""
     workflow_started_at = time.perf_counter()
@@ -392,6 +394,7 @@ def _transcribe_audio_openai(
             timing_stats=timing_stats,
             model_name=resolved_model,
             concurrency=concurrency,
+            chunk_progress_callback=progress_callback,
         )
 
         merge_started_at = time.perf_counter()
@@ -528,6 +531,7 @@ def transcribe_plain_chunks_concurrently(
     model_name: str,
     concurrency: int,
     chunk_transcriber: Callable[[Path], str] | None = None,
+    chunk_progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[str]:
     """plain STT 청크를 제한된 동시성으로 처리하고 원래 순서대로 반환합니다."""
     total_chunks = len(files_to_transcribe)
@@ -538,6 +542,7 @@ def transcribe_plain_chunks_concurrently(
     started_at = time.perf_counter()
     results: list[str | None] = [None] * total_chunks
     log_trace_event("plain_concurrency_start", concurrency=max_workers, total_chunks=total_chunks)
+    notify_chunk_progress(chunk_progress_callback, completed_chunks=0, total_chunks=total_chunks)
 
     def run_chunk(chunk_index: int, audio_file: Path) -> tuple[int, str, float]:
         """worker thread에서 단일 plain chunk를 전사합니다."""
@@ -600,6 +605,11 @@ def transcribe_plain_chunks_concurrently(
 
                 results[completed_index - 1] = transcript
                 timing_stats.record_chunk(elapsed_seconds)
+                notify_chunk_progress(
+                    chunk_progress_callback,
+                    completed_chunks=len(timing_stats.chunk_elapsed_seconds),
+                    total_chunks=total_chunks,
+                )
                 log_trace_event(
                     "chunk_completed",
                     mode="plain",
@@ -615,6 +625,27 @@ def transcribe_plain_chunks_concurrently(
             )
 
     return [transcript or "" for transcript in results]
+
+
+def notify_chunk_progress(
+    chunk_progress_callback: Callable[[int, int], None] | None,
+    completed_chunks: int,
+    total_chunks: int,
+) -> None:
+    """선택적 청크 진행률 callback을 STT 실패 원인으로 만들지 않고 호출합니다."""
+    if chunk_progress_callback is None:
+        return
+
+    try:
+        chunk_progress_callback(completed_chunks, total_chunks)
+    except Exception as exc:
+        logger.warning(
+            "%s chunk_progress_callback_failed completed_chunks=%s total_chunks=%s error=%s",
+            get_trace_prefix(),
+            completed_chunks,
+            total_chunks,
+            exc,
+        )
 
 
 def transcribe_chunk(

@@ -70,6 +70,8 @@ class JobStatusResponse(BaseModel):
     progress: int = 0
     stage: str = "업로드 대기"
     message: str = "오디오 파일을 기다리고 있습니다."
+    completed_chunks: Optional[int] = None
+    total_chunks: Optional[int] = None
     stt_seconds: Optional[float] = None
     summary_seconds: Optional[float] = None
 

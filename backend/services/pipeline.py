@@ -6,7 +6,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from summarize import summarize_transcript
 from summarization.models import NormalizedTranscript
@@ -20,6 +20,7 @@ try:
         cleanup_job_files,
         mark_job_completed,
         mark_job_failed,
+        mark_job_chunk_progress,
         mark_job_processing,
         mark_job_progress,
         mark_job_transcribed,
@@ -27,7 +28,7 @@ try:
     )
 except ModuleNotFoundError:
     # `cd backend` 기준 uvicorn 실행에서 로컬 패키지 경로를 사용합니다.
-    from storage import cleanup_job_files, mark_job_completed, mark_job_failed, mark_job_processing, mark_job_progress, mark_job_transcribed, set_job_meeting_type
+    from storage import cleanup_job_files, mark_job_completed, mark_job_failed, mark_job_chunk_progress, mark_job_processing, mark_job_progress, mark_job_transcribed, set_job_meeting_type
 
 
 def run_meeting_pipeline(job_id: str, audio_path: Path, context: str = "", meeting_type: str = "general") -> None:
@@ -38,7 +39,7 @@ def run_meeting_pipeline(job_id: str, audio_path: Path, context: str = "", meeti
     try:
         mark_job_progress(job_id, 15, "음성 변환", "음성을 텍스트로 변환하는 중입니다.")
         stt_started_at = time.perf_counter()
-        transcript = transcribe_audio(audio_path)
+        transcript = transcribe_audio(audio_path, progress_callback=build_chunk_progress_callback(job_id))
         stt_seconds = time.perf_counter() - stt_started_at
         mark_job_progress(job_id, 55, "음성 변환 완료", "회의 내용을 텍스트로 변환했습니다.", stt_seconds=stt_seconds)
 
@@ -76,7 +77,11 @@ def run_transcription_pipeline(
     try:
         mark_job_progress(job_id, 15, "음성 변환", "음성을 텍스트로 변환하는 중입니다.")
         stt_started_at = time.perf_counter()
-        transcript, structured_transcript = transcribe_audio_for_review(audio_path, transcription_mode)
+        transcript, structured_transcript = transcribe_audio_for_review(
+            audio_path,
+            transcription_mode,
+            progress_callback=build_chunk_progress_callback(job_id),
+        )
         stt_seconds = time.perf_counter() - stt_started_at
         mark_job_progress(job_id, 95, "Transcript 정리", "검토 화면에 표시할 transcript를 준비하고 있습니다.", stt_seconds=stt_seconds)
         mark_job_transcribed(job_id, transcript, structured_transcript=structured_transcript)
@@ -130,7 +135,11 @@ def build_normalized_transcript_from_structured_payload(structured_transcript: d
         return None
 
 
-def transcribe_audio_for_review(audio_path: Path, transcription_mode: str | None = None) -> tuple[str, dict[str, Any] | None]:
+def transcribe_audio_for_review(
+    audio_path: Path,
+    transcription_mode: str | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> tuple[str, dict[str, Any] | None]:
     """설정된 STT mode에 따라 검토 화면용 plain/structured transcript를 생성합니다."""
     resolved_mode = get_transcription_mode(transcription_mode)
     logger.warning(
@@ -141,7 +150,7 @@ def transcribe_audio_for_review(audio_path: Path, transcription_mode: str | None
         TRANSCRIBE_RUNTIME_VERSION,
     )
     if resolved_mode != "diarized":
-        transcript = transcribe_audio(audio_path)
+        transcript = transcribe_audio(audio_path, progress_callback=progress_callback)
         return str(transcript), None
 
     try:
@@ -163,8 +172,17 @@ def transcribe_audio_for_review(audio_path: Path, transcription_mode: str | None
             exc,
             TRANSCRIBE_RUNTIME_VERSION,
         )
-        transcript = transcribe_audio(audio_path)
+        transcript = transcribe_audio(audio_path, progress_callback=progress_callback)
         return str(transcript), None
+
+
+def build_chunk_progress_callback(job_id: str) -> Callable[[int, int], None]:
+    """plain STT 청크 진행률을 사용자용 job 상태로 반영하는 callback을 만듭니다."""
+
+    def update_chunk_progress(completed_chunks: int, total_chunks: int) -> None:
+        mark_job_chunk_progress(job_id, completed_chunks, total_chunks)
+
+    return update_chunk_progress
 
 
 def get_transcription_mode(transcription_mode: str | None = None) -> str:

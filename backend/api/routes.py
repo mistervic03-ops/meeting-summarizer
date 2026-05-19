@@ -10,12 +10,12 @@ from fastapi.responses import PlainTextResponse
 try:
     from backend.schemas import JobCreateResponse, JobResultResponse, JobStatusResponse, MeetingType, TranscriptJobRequest, TranscriptResultResponse
     from backend.services.pipeline import run_meeting_pipeline, run_transcript_summary_pipeline, run_transcription_pipeline
-    from backend.storage import create_job, get_job, mark_job_failed, save_upload_file, set_job_context, set_job_meeting_type
+    from backend.storage import create_job, get_job, get_job_status_snapshot, mark_job_failed, save_upload_file, set_job_context, set_job_meeting_type
 except ModuleNotFoundError:
     # `backend/` 디렉터리 안에서 직접 서버를 띄우는 개발 흐름을 지원합니다.
     from schemas import JobCreateResponse, JobResultResponse, JobStatusResponse, MeetingType, TranscriptJobRequest, TranscriptResultResponse
     from services.pipeline import run_meeting_pipeline, run_transcript_summary_pipeline, run_transcription_pipeline
-    from storage import create_job, get_job, mark_job_failed, save_upload_file, set_job_context, set_job_meeting_type
+    from storage import create_job, get_job, get_job_status_snapshot, mark_job_failed, save_upload_file, set_job_context, set_job_meeting_type
 
 router = APIRouter()
 
@@ -147,23 +147,11 @@ def dump_structured_transcript(structured_transcript: object) -> dict | None:
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
 def get_process_job(job_id: str) -> JobStatusResponse:
     """작업 진행 상태를 조회합니다."""
-    job = get_job(job_id)
-    if job is None:
+    job_snapshot = get_job_status_snapshot(job_id)
+    if job_snapshot is None:
         raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다.")
 
-    return JobStatusResponse(
-        job_id=job.id,
-        status=job.status,
-        filename=job.filename,
-        created_at=job.created_at,
-        completed_at=job.completed_at,
-        error=job.error,
-        progress=job.progress,
-        stage=job.stage,
-        message=job.message,
-        stt_seconds=job.stt_seconds,
-        summary_seconds=job.summary_seconds,
-    )
+    return JobStatusResponse(**job_snapshot)
 
 
 @router.get("/jobs/{job_id}/result", response_model=JobResultResponse)
