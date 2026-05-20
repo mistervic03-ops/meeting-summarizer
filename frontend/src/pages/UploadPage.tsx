@@ -13,7 +13,7 @@ import TranscriptPage from "./TranscriptPage";
 
 const AUDIO_ACCEPT = "audio/*,.m4a,.mp3,.mp4,.mpeg,.mpga,.wav,.webm";
 const TRANSCRIPT_ACCEPT = ".txt,.md,text/plain,text/markdown";
-const CONTEXT_HELP_TEXT = "선택 입력입니다. 회의 목적, 고객사, 프로젝트명, 주요 용어를 짧게 적으면 요약에 참고합니다.\n예: A소프트와 향후 협력 방향성 및 후속 액션 논의";
+const CONTEXT_HELP_TEXT = "선택 입력입니다. 회의 목적, 고객사, 프로젝트명, 주요 용어를 짧게 적으면 요약에 참고합니다.";
 const CLOUD_MODE_HELP_TEXT = "OpenAI로 음성을 텍스트로 바꿉니다.\n비용이 발생할 수 있어 중요한 회의나 결과 비교가 필요할 때만 사용하세요.";
 type InputMode = "audio" | "text";
 

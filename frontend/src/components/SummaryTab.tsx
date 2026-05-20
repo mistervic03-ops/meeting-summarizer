@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, Info } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { Decision, JobResult, MeetingType } from "../api/types";
 import ActionsTab from "./ActionsTab";
+import ContextHelp from "./ui/ContextHelp";
 import EmptySection from "./ui/EmptySection";
 import SectionHeading from "./ui/SectionHeading";
 import { normalizeDisplayText } from "../utils/displayText";
@@ -168,12 +169,7 @@ export default function SummaryTab({
             <div className="min-w-0">
               <h2 className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-slate-800 dark:text-app-body">
                 {labels.warningTitle}
-                <span className="relative inline-flex text-slate-400 dark:text-app-subtle">
-                  <Info size={13} strokeWidth={2} />
-                  <span className="pointer-events-none absolute left-0 top-full z-20 mt-1.5 hidden w-56 whitespace-pre-line rounded-md border border-slate-200 bg-white px-2.5 py-2 text-left text-[11px] font-normal leading-4 text-slate-600 shadow-sm group-focus/review:block group-hover/review:block dark:border-app-line dark:bg-app-popover dark:text-app-muted">
-                    {labels.warningHelp}
-                  </span>
-                </span>
+                <ContextHelp stopPropagation text={labels.warningHelp} />
               </h2>
               <p className="mt-0.5 text-[11px] leading-4 text-slate-500 dark:text-app-muted">
                 {labels.warningMeta} {warnings.length}
