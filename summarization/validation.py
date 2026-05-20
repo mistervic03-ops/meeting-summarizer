@@ -12,6 +12,14 @@ SOURCE_UTTERANCE_ID_WARNING_PATTERN = re.compile(
     r"^\s*(?P<utterance_id>u_\d{4})\s*[:：]\s*(?P<reason>.+?)\s*$",
     flags=re.IGNORECASE,
 )
+SOURCE_UTTERANCE_ID_TEXT_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])u_\d{4}(?![A-Za-z0-9_])",
+    flags=re.IGNORECASE,
+)
+SOURCE_UTTERANCE_ID_PREFIX_PATTERN = re.compile(
+    r"^\s*u_\d{4}(?:\s|[:：]|에서|발화자|화자|의|가|이|은|는|을|를)",
+    flags=re.IGNORECASE,
+)
 
 
 def validate_structure(
@@ -432,6 +440,8 @@ def format_display_warnings(
         if source_utterance_warning is not None:
             add_general_warning(source_utterance_warning, ordered_entries, general_warnings, force_display=True)
             continue
+        if is_internal_owner_inference_warning(warning):
+            continue
 
         decision_warning = parse_decision_display_warning(warning)
         if decision_warning:
@@ -522,6 +532,85 @@ def classify_source_utterance_warning_reason(reason: str) -> str | None:
     if "내용" in normalize_warning_text(reason):
         return "confidence"
     return None
+
+
+def is_internal_owner_inference_warning(warning: str) -> bool:
+    """화자 추론 실패 같은 내부 검증 설명을 공개 warning에서 숨깁니다."""
+    warning_text = as_text(warning)
+    warning_key = normalize_warning_text(warning_text)
+    if not warning_key:
+        return False
+
+    if is_source_id_warning(warning_text) and is_source_id_internal_warning(warning_text, warning_key):
+        return True
+    if is_unknown_speaker_owner_warning(warning_key):
+        return True
+    if has_speaker_label_term(warning_key) and has_owner_inference_failure_term(warning_key):
+        return True
+    if has_first_person_acceptance_term(warning_key) and has_owner_inference_failure_term(warning_key):
+        return True
+    return False
+
+
+def is_source_id_warning(warning: str) -> bool:
+    """warning 문구에 source utterance ID가 포함되어 있는지 반환합니다."""
+    return bool(SOURCE_UTTERANCE_ID_TEXT_PATTERN.search(as_text(warning)))
+
+
+def is_source_id_internal_warning(warning: str, warning_key: str) -> bool:
+    """source utterance ID가 주어인 내부 추론 warning인지 반환합니다."""
+    if not SOURCE_UTTERANCE_ID_PREFIX_PATTERN.search(warning):
+        return False
+    return (
+        has_speaker_assumption_term(warning_key)
+        or has_owner_inference_failure_term(warning_key)
+        or has_first_person_acceptance_term(warning_key)
+        or "근거확인" in warning_key
+        or "확인필요" in warning_key
+    )
+
+
+def is_unknown_speaker_owner_warning(warning_key: str) -> bool:
+    """Unknown speaker 기반 담당자 추론 실패 warning인지 반환합니다."""
+    return (
+        "unknown" in warning_key
+        and has_speaker_assumption_term(warning_key)
+        and has_owner_inference_failure_term(warning_key)
+    )
+
+
+def has_speaker_assumption_term(warning_key: str) -> bool:
+    """speaker label이나 화자 기반 추론 표현이 있는지 반환합니다."""
+    return (
+        "speaker" in warning_key
+        or "발화자" in warning_key
+        or "화자" in warning_key
+        or has_speaker_label_term(warning_key)
+    )
+
+
+def has_speaker_label_term(warning_key: str) -> bool:
+    """speaker label 표현이 있는지 반환합니다."""
+    return "speakerlabel" in warning_key or "speaker라벨" in warning_key or "speaker레이블" in warning_key
+
+
+def has_first_person_acceptance_term(warning_key: str) -> bool:
+    """1인칭 수락을 담당자 추론 근거로 삼은 표현인지 반환합니다."""
+    return "1인칭으로수락" in warning_key or "일인칭으로수락" in warning_key
+
+
+def has_owner_inference_failure_term(warning_key: str) -> bool:
+    """담당자 특정/추론 실패 설명인지 반환합니다."""
+    return (
+        "담당자를특정" in warning_key
+        or "담당자특정" in warning_key
+        or "담당자추론" in warning_key
+        or "owner추론" in warning_key
+        or "ownerinference" in warning_key
+        or "추론실패" in warning_key
+        or ("담당자" in warning_key and any(term in warning_key for term in ("특정", "추론", "불명확", "미정", "실패")))
+        or ("owner" in warning_key and any(term in warning_key for term in ("unknown", "missing", "fail", "실패", "미정")))
+    )
 
 
 def remove_stale_owner_warning_kind(

@@ -1409,13 +1409,6 @@ Speaker 1: 배포 확인
         self.assertIn("스키마에 없는 필드는 생성하지 마세요", prompt)
         self.assertIn("due_date는 확실한 절대 날짜가 원문에 직접 나온 경우가 아니면 ISO 날짜로 바꾸지 말고", prompt)
         self.assertIn("\"금요일 오후 3시\"", prompt)
-        self.assertIn("Markdown 취소선 문법 \"~~...~~\"를 사용하지 마세요", prompt)
-        self.assertIn("self-correction/editing artifact를 출력하지 마세요", prompt)
-        self.assertIn("최종 의도 값만 쓰세요", prompt)
-        self.assertIn("정상적인 범위 표기는 허용됩니다", prompt)
-        self.assertIn("\"93~95%\"", prompt)
-        self.assertIn("\"10~15개\"", prompt)
-        self.assertIn("\"5-7일\"", prompt)
         self.assertIn("summary_facts는 SummaryTab의 빠른 개요에 쓰는 3~6개의 상위 수준 bullet", prompt)
         self.assertIn("summary_facts에는 회의 전체를 이해하는 데 필요한 핵심 맥락과 결과", prompt)
         self.assertIn("언급된 모든 사실, 예시, 수치, 질문, 고객 관심사, 기술 세부사항, 운영 조건", prompt)
@@ -2569,8 +2562,8 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
             )
         )
 
-    def test_render_output_formats_raw_internal_warnings(self) -> None:
-        """Markdown 확인 필요 섹션도 내부 필드명을 노출하지 않습니다."""
+    def test_render_output_omits_warning_review_section(self) -> None:
+        """Markdown 회의록에는 warning 검토 섹션을 렌더링하지 않습니다."""
         structure = {
             "summary_facts": ["요약"],
             "decisions": [],
@@ -2586,11 +2579,15 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
 
         output = summarize.render_output(structure, "## 회의 요약\n내용")
 
-        self.assertIn("- 담당자 확인이 필요한 액션 아이템이 있습니다.", output)
-        self.assertIn("- 기한 확인이 필요한 액션 아이템이 있습니다.", output)
-        self.assertIn("- 내용 확인이 필요한 항목이 있습니다.", output)
-        self.assertIn("- 원문 근거 확인이 필요한 항목이 있습니다.", output)
-        self.assertFalse(any(internal_name in output for internal_name in ("owner", "due_date", "confidence", "source_quote")))
+        self.assertNotIn("## ⚠️ 확인 필요", output)
+        self.assertNotIn("## 검토 필요", output)
+        self.assertNotIn("- 담당자 확인이 필요한 액션 아이템이 있습니다.", output)
+        self.assertNotIn("- 기한 확인이 필요한 액션 아이템이 있습니다.", output)
+        self.assertNotIn("- 내용 확인이 필요한 항목이 있습니다.", output)
+        self.assertNotIn("- 원문 근거 확인이 필요한 항목이 있습니다.", output)
+        self.assertIn("## 📋 빠른 요약", output)
+        self.assertIn("## ✅ 액션 아이템", output)
+        self.assertIn("## 📝 전체 회의록", output)
 
     def test_format_display_warnings_standardizes_generic_korean_warnings(self) -> None:
         """구체 항목이 없는 한국어 warning도 간결한 표준 문장으로 정리합니다."""
@@ -2652,6 +2649,28 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertEqual(warnings.count("담당자 확인이 필요한 액션 아이템이 있습니다."), 1)
         self.assertFalse(any("u_" in warning.lower() for warning in warnings))
         self.assertFalse(any("추가 확인이 필요할 수 있습니다" == warning for warning in warnings))
+
+    def test_format_display_warnings_drops_internal_owner_inference_leakage(self) -> None:
+        """source ID와 Unknown speaker 기반 내부 추론 설명은 공개 warning에서 숨깁니다."""
+        warnings = summarize.format_display_warnings(
+            [
+                "u_0017에서 1인칭으로 수락했으나 speaker label이 없어 담당자를 특정할 수 없음",
+                "speaker label이 Unknown이어서 담당자를 특정할 수 없음",
+                "u_0080 발화자가 Unknown이라 owner 추론 실패",
+                "Unknown speaker라 1인칭으로 수락했으나 담당자 추론 실패",
+                "KT 데모 일정 조율 결과에 따라 대응 방안 검토 필요",
+                "QA 일정 지연 리스크가 있어 일정 확인 필요",
+                "배포 확인: 원문 근거 확인 필요",
+            ]
+        )
+
+        self.assertIn("KT 데모 일정 조율 결과에 따라 대응 방안 검토 필요", warnings)
+        self.assertIn("QA 일정 지연 리스크가 있어 일정 확인 필요", warnings)
+        self.assertIn("배포 확인: 원문 근거 확인 필요", warnings)
+        self.assertFalse(any("u_" in warning.lower() for warning in warnings))
+        self.assertFalse(any("unknown" in warning.lower() for warning in warnings))
+        self.assertFalse(any("speaker label" in warning.lower() for warning in warnings))
+        self.assertFalse(any("1인칭으로 수락" in warning for warning in warnings))
 
     def test_format_display_warnings_polishes_overly_generic_subjects(self) -> None:
         """너무 넓은 주어는 구체 task가 아니라 일반 warning으로 접습니다."""
@@ -2915,13 +2934,6 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("1인칭 표현(저, 제가) 자체를 담당자명으로 쓰지 마세요", prompt)
         self.assertIn("회의록 작성 초점", prompt)
         self.assertIn("JSON 내용을 그대로 나열하지 말고", prompt)
-        self.assertIn("Markdown 취소선 문법 \"~~...~~\"를 사용하지 말고", prompt)
-        self.assertIn("self-correction/editing artifact를 남기지 마세요", prompt)
-        self.assertIn("최종 의도 값만 작성하세요", prompt)
-        self.assertIn("정상적인 범위 표기는 허용됩니다", prompt)
-        self.assertIn("\"93~95%\"", prompt)
-        self.assertIn("\"10~15개\"", prompt)
-        self.assertIn("\"5-7일\"", prompt)
         self.assertIn("회의 요약", prompt)
         self.assertIn("주요 결정사항", prompt)
         self.assertIn("액션 아이템", prompt)
@@ -2990,8 +3002,8 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("아이디어, 대안, 탐색적 논의", brainstorming_prompt)
         self.assertIn("진행 상황, blocker, 일정", execution_prompt)
 
-    def test_render_output_combines_warnings_quick_summary_actions_and_full_minutes(self) -> None:
-        """render_output은 Track B JSON과 자연어 회의록을 요청 순서대로 조합합니다."""
+    def test_render_output_combines_quick_summary_actions_and_full_minutes_without_warnings(self) -> None:
+        """render_output은 warning 섹션 없이 Track B JSON과 자연어 회의록을 조합합니다."""
         structure = {
             "summary_facts": [
                 "내부 배포 방향을 논의했습니다.",
@@ -3023,10 +3035,11 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
 
         output = summarize.render_output(structure, minutes)
 
-        self.assertLess(output.index("## ⚠️ 확인 필요"), output.index("## 📋 빠른 요약"))
         self.assertLess(output.index("## 📋 빠른 요약"), output.index("## ✅ 액션 아이템"))
         self.assertLess(output.index("## ✅ 액션 아이템"), output.index("## 📝 전체 회의록"))
-        self.assertIn("- 배포 확인 기한 필요", output)
+        self.assertNotIn("## ⚠️ 확인 필요", output)
+        self.assertNotIn("## 검토 필요", output)
+        self.assertNotIn("- 배포 확인 기한 필요", output)
         self.assertIn("- 내부 배포 방향을 논의했습니다.", output)
         self.assertIn("- 테스트 모드와 저장 흐름을 검토했습니다.", output)
         self.assertIn("- API 키 설정 확인이 필요합니다.", output)
@@ -3116,6 +3129,28 @@ ___
 
         self.assertEqual(normalize_generated_minutes_markdown(minutes), minutes)
 
+    def test_normalize_generated_minutes_markdown_removes_strikethrough_artifacts(self) -> None:
+        """Markdown 취소선 self-correction은 제거하고 정상 범위 표기는 보존합니다."""
+        from summarization.rendering import normalize_generated_minutes_markdown
+
+        minutes = """
+## 회의 요약
+- 전환율은 ~~90~~91%로 정리했습니다.
+- 달성률은 ~~83~~84%입니다.
+- 다음 주 ~~월요일~~화요일에 재확인합니다.
+- 정상 범위는 90~91%, 10~15개, 월요일~화요일입니다.
+""".strip()
+
+        cleaned_minutes = normalize_generated_minutes_markdown(minutes)
+
+        self.assertIn("- 전환율은 91%로 정리했습니다.", cleaned_minutes)
+        self.assertIn("- 달성률은 84%입니다.", cleaned_minutes)
+        self.assertIn("- 다음 주 화요일에 재확인합니다.", cleaned_minutes)
+        self.assertIn("- 정상 범위는 90~91%, 10~15개, 월요일~화요일입니다.", cleaned_minutes)
+        self.assertNotIn("~~90~~91%", cleaned_minutes)
+        self.assertNotIn("~~83~~84%", cleaned_minutes)
+        self.assertNotIn("~~월요일~~화요일", cleaned_minutes)
+
     def test_build_summary_result_keeps_unresolved_owner_value_for_api(self) -> None:
         """Markdown 표시와 달리 공개 구조화 결과의 owner 값은 호환성을 위해 미정으로 유지합니다."""
         structure = {
@@ -3158,8 +3193,8 @@ ___
         self.assertNotIn("논의 메모: 신규 구조 적용 가능성이 언급되었습니다.", output)
         self.assertNotIn("확정 근거가 약해", output)
 
-    def test_render_output_softens_non_execution_warnings(self) -> None:
-        """비운영 회의의 owner/due warning은 렌더링에서 부드럽게 표시합니다."""
+    def test_render_output_omits_non_execution_warnings(self) -> None:
+        """비운영 회의도 warning 검토 섹션을 Markdown에 렌더링하지 않습니다."""
         structure = {
             "summary_facts": ["요구사항을 검토했습니다."],
             "decisions": [],
@@ -3170,8 +3205,10 @@ ___
 
         output = summarize.render_output(structure, "## 회의 요약\n고객 논의", meeting_type="customer_meeting")
 
-        self.assertIn("## 검토 메모", output)
-        self.assertIn("요구사항 후속 논의: 추가 확인이 필요할 수 있습니다", output)
+        self.assertIn("## 고객 관심사 및 검토 포인트", output)
+        self.assertNotIn("## 검토 메모", output)
+        self.assertNotIn("## 검토 필요", output)
+        self.assertNotIn("요구사항 후속 논의: 추가 확인이 필요할 수 있습니다", output)
         self.assertNotIn("담당자 및 기한 확인 필요", output)
 
     def test_extract_response_text_supports_common_response_shapes(self) -> None:
