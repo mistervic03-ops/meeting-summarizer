@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { ChevronDown, Info } from "lucide-react";
 import { Decision, JobResult, MeetingType } from "../api/types";
 import ActionsTab from "./ActionsTab";
@@ -5,6 +6,8 @@ import EmptySection from "./ui/EmptySection";
 import SectionHeading from "./ui/SectionHeading";
 import { normalizeDisplayText } from "../utils/displayText";
 import { getSummaryLabels, resolveMeetingType, splitDiscussionNotes, usesQuietActionTone } from "../utils/resultView";
+
+const SUMMARY_FACT_PREVIEW_LIMIT = 6;
 
 /**
  * Renders the decision status badge in the summary tab.
@@ -56,9 +59,13 @@ export default function SummaryTab({
   result: JobResult;
   summaryFacts?: string[];
 }) {
+  const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
   const resolvedMeetingType = resolveMeetingType(meetingType ?? result.meeting_type);
   const splitFacts = splitDiscussionNotes(result.summary_facts ?? []);
   const visibleSummaryFacts = summaryFacts ?? splitFacts.summaryFacts;
+  const shouldCollapseSummary = visibleSummaryFacts.length > SUMMARY_FACT_PREVIEW_LIMIT;
+  const displayedSummaryFacts =
+    shouldCollapseSummary && !isSummaryExpanded ? visibleSummaryFacts.slice(0, SUMMARY_FACT_PREVIEW_LIMIT) : visibleSummaryFacts;
   const visibleDiscussionNotes = discussionNotes ?? splitFacts.discussionNotes;
   const actionItems = result.action_items ?? [];
   const decisions = result.decisions ?? [];
@@ -68,6 +75,11 @@ export default function SummaryTab({
   const warnings = displayWarnings ?? result.warnings ?? [];
   const labels = getSummaryLabels(resolvedMeetingType);
   const sectionOrder = getSectionOrder(resolvedMeetingType);
+
+  useEffect(() => {
+    setIsSummaryExpanded(false);
+  }, [result.job_id, visibleSummaryFacts.length]);
+
   const sectionMap = {
     actions: (
       <section key="actions">
@@ -126,13 +138,24 @@ export default function SummaryTab({
       <section key="summary">
         <SectionHeading count={visibleSummaryFacts.length} title={labels.summaryTitle} />
         {visibleSummaryFacts.length ? (
-          <div className="border-y border-slate-300 dark:border-app-border">
-            {visibleSummaryFacts.map((fact) => (
-              <p key={fact} className="break-words border-b border-slate-100 py-[9px] text-[13px] leading-[1.72] text-slate-700 last:border-b-0 dark:border-app-line dark:text-app-body">
-                {normalizeDisplayText(fact)}
-              </p>
-            ))}
-          </div>
+          <>
+            <div className="border-y border-slate-300 dark:border-app-border">
+              {displayedSummaryFacts.map((fact) => (
+                <p key={fact} className="break-words border-b border-slate-100 py-[9px] text-[13px] leading-[1.72] text-slate-700 last:border-b-0 dark:border-app-line dark:text-app-body">
+                  {normalizeDisplayText(fact)}
+                </p>
+              ))}
+            </div>
+            {shouldCollapseSummary ? (
+              <button
+                className="mt-2 inline-flex h-7 items-center rounded-sm px-0.5 text-[12px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:text-app-muted dark:hover:text-app-text"
+                type="button"
+                onClick={() => setIsSummaryExpanded((current) => !current)}
+              >
+                {isSummaryExpanded ? "접기" : `더 보기 ${visibleSummaryFacts.length - SUMMARY_FACT_PREVIEW_LIMIT}`}
+              </button>
+            ) : null}
+          </>
         ) : (
           <EmptySection message={`${labels.summaryTitle}이 없습니다.`} />
         )}

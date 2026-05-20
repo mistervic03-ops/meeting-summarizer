@@ -69,13 +69,7 @@ def render_output(structure: dict[str, Any], minutes_text: str, meeting_type: st
     action_item_lines = [action_title]
     if normalized_structure.action_items:
         for item in normalized_structure.action_items:
-            tag = " ⚠️" if item.get("confidence") == "low" or as_text(item.get("due_date")) == "미정" else ""
-            owner = format_action_owner_for_display(as_text(item.get("owner")))
-            action_item_lines.append(
-                f"-{tag} 담당자: {owner} / "
-                f"기한: {as_text(item.get('due_date')) or '미정'} / "
-                f"할 일: {as_text(item.get('task')) or '내용 미정'}"
-            )
+            action_item_lines.append(format_action_item_for_markdown(item))
     else:
         action_item_lines.append("- 없음")
     sections.append("\n".join(action_item_lines))
@@ -99,12 +93,42 @@ def normalize_generated_minutes_markdown(minutes_text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", cleaned_text)
 
 
-def format_action_owner_for_display(owner: str) -> str:
-    """Markdown 표시에서 미해결 담당자를 사람 확인이 필요한 상태로 부드럽게 보여줍니다."""
+def format_action_item_for_markdown(item: dict[str, Any]) -> str:
+    """Markdown 액션 아이템을 task-first 형식으로 표시합니다."""
+    task = as_text(item.get("task")) or "내용 미정"
+    metadata = []
+    owner = meaningful_action_owner(as_text(item.get("owner")))
+    due_date = meaningful_action_due_date(as_text(item.get("due_date")))
+
+    if owner:
+        metadata.append(f"담당자: {owner}")
+    if due_date:
+        metadata.append(f"기한: {due_date}")
+    if metadata:
+        return f"- {task} ({' / '.join(metadata)})"
+    return f"- {task}"
+
+
+def meaningful_action_owner(owner: str) -> str:
+    """Markdown에 표시할 의미 있는 담당자만 반환합니다."""
     normalized_owner = normalize_action_owner(owner)
-    if normalized_owner == "미정":
-        return "확인 필요"
+    if is_unresolved_action_metadata(normalized_owner):
+        return ""
     return normalized_owner
+
+
+def meaningful_action_due_date(due_date: str) -> str:
+    """Markdown에 표시할 의미 있는 기한만 반환합니다."""
+    due_date_text = as_text(due_date)
+    if is_unresolved_action_metadata(due_date_text):
+        return ""
+    return due_date_text
+
+
+def is_unresolved_action_metadata(value: str) -> bool:
+    """담당자/기한 metadata가 미해결 표시값인지 확인합니다."""
+    metadata_key = re.sub(r"\s+", "", as_text(value)).lower()
+    return metadata_key in {"", "미정", "확인필요", "검토필요"}
 
 
 def build_summary_result(structure: dict[str, Any], minutes_text: str) -> SummaryResult:

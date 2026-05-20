@@ -1409,6 +1409,13 @@ Speaker 1: 배포 확인
         self.assertIn("스키마에 없는 필드는 생성하지 마세요", prompt)
         self.assertIn("due_date는 확실한 절대 날짜가 원문에 직접 나온 경우가 아니면 ISO 날짜로 바꾸지 말고", prompt)
         self.assertIn("\"금요일 오후 3시\"", prompt)
+        self.assertIn("Markdown 취소선 문법 \"~~...~~\"를 사용하지 마세요", prompt)
+        self.assertIn("self-correction/editing artifact를 출력하지 마세요", prompt)
+        self.assertIn("최종 의도 값만 쓰세요", prompt)
+        self.assertIn("정상적인 범위 표기는 허용됩니다", prompt)
+        self.assertIn("\"93~95%\"", prompt)
+        self.assertIn("\"10~15개\"", prompt)
+        self.assertIn("\"5-7일\"", prompt)
         self.assertIn("summary_facts는 SummaryTab의 빠른 개요에 쓰는 3~6개의 상위 수준 bullet", prompt)
         self.assertIn("summary_facts에는 회의 전체를 이해하는 데 필요한 핵심 맥락과 결과", prompt)
         self.assertIn("언급된 모든 사실, 예시, 수치, 질문, 고객 관심사, 기술 세부사항, 운영 조건", prompt)
@@ -2619,6 +2626,33 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertEqual(warnings.count("담당자 확인이 필요한 액션 아이템이 있습니다."), 1)
         self.assertFalse(any("action item" in warning.lower() or "merge" in warning.lower() for warning in warnings))
 
+    def test_format_display_warnings_filters_source_utterance_id_only_subjects(self) -> None:
+        """source utterance ID만 주어인 warning은 공개 warning에 raw ID를 남기지 않습니다."""
+        warnings = summarize.format_display_warnings(
+            [
+                "u_0026: 담당자 확인 필요",
+                "u_0015: 기한 확인 필요",
+                "u_0031: 담당자 및 기한 확인 필요",
+                "u_0042: 원문 근거 확인 필요",
+                "u_0043: 내용 확인 필요",
+                "u_0050: 추가 확인이 필요할 수 있습니다",
+                "U_0007: 담당자 확인 필요",
+                "API 응답 오류 재현: 담당자 확인 필요",
+                "고객사 데이터 전달: 추가 확인이 필요할 수 있습니다",
+            ]
+        )
+
+        self.assertIn("담당자 확인이 필요한 액션 아이템이 있습니다.", warnings)
+        self.assertIn("기한 확인이 필요한 액션 아이템이 있습니다.", warnings)
+        self.assertIn("담당자 및 기한 확인이 필요한 액션 아이템이 있습니다.", warnings)
+        self.assertIn("원문 근거 확인이 필요한 항목이 있습니다.", warnings)
+        self.assertIn("내용 확인이 필요한 항목이 있습니다.", warnings)
+        self.assertIn("API 응답 오류 재현: 담당자 확인 필요", warnings)
+        self.assertIn("고객사 데이터 전달: 추가 확인이 필요할 수 있습니다", warnings)
+        self.assertEqual(warnings.count("담당자 확인이 필요한 액션 아이템이 있습니다."), 1)
+        self.assertFalse(any("u_" in warning.lower() for warning in warnings))
+        self.assertFalse(any("추가 확인이 필요할 수 있습니다" == warning for warning in warnings))
+
     def test_format_display_warnings_polishes_overly_generic_subjects(self) -> None:
         """너무 넓은 주어는 구체 task가 아니라 일반 warning으로 접습니다."""
         warnings = summarize.format_display_warnings(
@@ -2881,6 +2915,13 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("1인칭 표현(저, 제가) 자체를 담당자명으로 쓰지 마세요", prompt)
         self.assertIn("회의록 작성 초점", prompt)
         self.assertIn("JSON 내용을 그대로 나열하지 말고", prompt)
+        self.assertIn("Markdown 취소선 문법 \"~~...~~\"를 사용하지 말고", prompt)
+        self.assertIn("self-correction/editing artifact를 남기지 마세요", prompt)
+        self.assertIn("최종 의도 값만 작성하세요", prompt)
+        self.assertIn("정상적인 범위 표기는 허용됩니다", prompt)
+        self.assertIn("\"93~95%\"", prompt)
+        self.assertIn("\"10~15개\"", prompt)
+        self.assertIn("\"5-7일\"", prompt)
         self.assertIn("회의 요약", prompt)
         self.assertIn("주요 결정사항", prompt)
         self.assertIn("액션 아이템", prompt)
@@ -2990,10 +3031,45 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("- 테스트 모드와 저장 흐름을 검토했습니다.", output)
         self.assertIn("- API 키 설정 확인이 필요합니다.", output)
         self.assertNotIn("이 줄은 빠른 요약에서 제외됩니다.", output)
-        self.assertIn("- ⚠️ 담당자: 확인 필요 / 기한: 미정 / 할 일: 배포 확인", output)
+        self.assertIn("- 배포 확인", output)
+        self.assertIn("- 샘플 검수 (담당자: 이서연 / 기한: 2026-05-20)", output)
         self.assertNotIn("담당자: 미정", output)
-        self.assertIn("- 담당자: 이서연 / 기한: 2026-05-20 / 할 일: 샘플 검수", output)
+        self.assertNotIn("담당자: 확인 필요", output)
+        self.assertNotIn("기한: 미정", output)
+        self.assertNotIn("할 일:", output)
+        self.assertNotIn("- ⚠️", output)
         self.assertNotIn("## 액션 아이템\n-", output)
+
+    def test_render_output_formats_action_items_task_first_with_optional_metadata(self) -> None:
+        """Markdown 액션 아이템은 업무명을 먼저 표시하고 의미 있는 metadata만 붙입니다."""
+        structure = {
+            "summary_facts": ["요약"],
+            "decisions": [],
+            "action_items": [
+                {"task": "POC 환경 구성", "owner": "미정", "due_date": "검토 필요", "confidence": "low"},
+                {"task": "회의록 공유", "owner": "김민수", "due_date": "확인 필요", "confidence": "low"},
+                {"task": "데이터 정제 작업 완료", "owner": " 확인 필요 ", "due_date": "이번주 안", "confidence": "low"},
+                {"task": "발표자료 준비", "owner": "이서연", "due_date": "6월 10일", "confidence": "high"},
+            ],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+
+        output = summarize.render_output(structure, "## 회의 요약\n내용")
+
+        self.assertIn("- POC 환경 구성", output)
+        self.assertIn("- 회의록 공유 (담당자: 김민수)", output)
+        self.assertIn("- 데이터 정제 작업 완료 (기한: 이번주 안)", output)
+        self.assertIn("- 발표자료 준비 (담당자: 이서연 / 기한: 6월 10일)", output)
+        self.assertNotIn("담당자: 미정", output)
+        self.assertNotIn("담당자: 확인 필요", output)
+        self.assertNotIn("담당자: 검토 필요", output)
+        self.assertNotIn("기한: 미정", output)
+        self.assertNotIn("기한: 확인 필요", output)
+        self.assertNotIn("기한: 검토 필요", output)
+        self.assertNotIn("담당자: 확인 필요 / 기한:", output)
+        self.assertNotIn("할 일:", output)
+        self.assertNotIn("- ⚠️", output)
 
     def test_render_output_removes_generated_minutes_title_headings(self) -> None:
         """모델이 생성한 최상단 회의록 제목은 backend wrapper와 중복되지 않게 제거합니다."""
@@ -3056,7 +3132,9 @@ ___
         result = summarize.build_summary_result(structure, "회의록")
 
         self.assertEqual(result["action_items"][0]["owner"], "미정")
+        self.assertEqual(result["action_items"][0]["due_date"], "미정")
         self.assertEqual(result["action_items"][1]["owner"], "Speaker 1")
+        self.assertEqual(result["action_items"][1]["due_date"], "2026-05-20")
 
     def test_render_output_separates_discussion_notes_for_technical_review(self) -> None:
         """기술 리뷰의 downgrade 메모는 요약이 아니라 논의 메모로 표시합니다."""

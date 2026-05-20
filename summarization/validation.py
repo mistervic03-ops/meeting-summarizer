@@ -8,6 +8,12 @@ from typing import Any
 from summarization.models import MeetingStructure, NormalizedTranscript
 
 
+SOURCE_UTTERANCE_ID_WARNING_PATTERN = re.compile(
+    r"^\s*(?P<utterance_id>u_\d{4})\s*[:：]\s*(?P<reason>.+?)\s*$",
+    flags=re.IGNORECASE,
+)
+
+
 def validate_structure(
     structure: dict[str, Any],
     transcript: str,
@@ -422,6 +428,11 @@ def format_display_warnings(
     general_warnings: set[str] = set()
 
     for warning in clean_text_list(warnings):
+        source_utterance_warning = format_source_utterance_id_only_warning(warning)
+        if source_utterance_warning is not None:
+            add_general_warning(source_utterance_warning, ordered_entries, general_warnings, force_display=True)
+            continue
+
         decision_warning = parse_decision_display_warning(warning)
         if decision_warning:
             decision, warning_kind = decision_warning
@@ -491,6 +502,26 @@ def format_display_warnings(
             display_warnings.append(display_value)
 
     return unique_text_list([sanitize_internal_warning_terms(warning) for warning in display_warnings])
+
+
+def format_source_utterance_id_only_warning(warning: str) -> str | None:
+    """source utterance ID만 주어인 warning을 사용자용 일반 warning으로 접습니다."""
+    match = SOURCE_UTTERANCE_ID_WARNING_PATTERN.match(as_text(warning))
+    if not match:
+        return None
+
+    warning_kind = classify_source_utterance_warning_reason(match.group("reason"))
+    return build_general_display_warning(warning_kind)
+
+
+def classify_source_utterance_warning_reason(reason: str) -> str | None:
+    """source utterance ID warning의 사유를 표시용 warning 종류로 분류합니다."""
+    warning_kind = classify_action_warning_reason(reason)
+    if warning_kind:
+        return warning_kind
+    if "내용" in normalize_warning_text(reason):
+        return "confidence"
+    return None
 
 
 def remove_stale_owner_warning_kind(
