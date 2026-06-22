@@ -16,6 +16,7 @@ from fastapi import UploadFile
 from backend.schemas import JobStatus
 
 UPLOAD_ROOT = Path(tempfile.gettempdir()) / "meeting_summarizer_api"
+ARTIFACT_ROOT = Path("data") / "meetings"
 JOBS: dict[str, "JobRecord"] = {}
 JOBS_LOCK = RLock()
 
@@ -110,6 +111,18 @@ async def save_upload_file(job_id: str, upload_file: UploadFile) -> Path:
 
     await upload_file.close()
     return target_path
+
+
+def save_text_artifacts(job_id: str, transcript: str, summary: str) -> tuple[Path, Path]:
+    """작업별 transcript와 summary 텍스트 artifact를 data 디렉터리에 저장합니다."""
+    artifact_dir = ARTIFACT_ROOT / job_id
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    transcript_path = artifact_dir / "transcript.txt"
+    summary_path = artifact_dir / "summary.txt"
+
+    transcript_path.write_text(transcript, encoding="utf-8")
+    summary_path.write_text(summary, encoding="utf-8")
+    return transcript_path, summary_path
 
 
 def mark_job_processing(job_id: str) -> None:

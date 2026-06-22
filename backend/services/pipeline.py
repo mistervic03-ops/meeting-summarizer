@@ -16,6 +16,7 @@ from transcribe import TRANSCRIBE_RUNTIME_VERSION, get_trace_prefix, transcribe_
 logger = logging.getLogger("backend.pipeline")
 
 try:
+    from backend.db import get_db_connection
     from backend.storage import (
         cleanup_job_files,
         mark_job_completed,
@@ -24,11 +25,13 @@ try:
         mark_job_processing,
         mark_job_progress,
         mark_job_transcribed,
+        save_text_artifacts,
         set_job_meeting_type,
     )
 except ModuleNotFoundError:
     # `cd backend` 기준 uvicorn 실행에서 로컬 패키지 경로를 사용합니다.
-    from storage import cleanup_job_files, mark_job_completed, mark_job_failed, mark_job_chunk_progress, mark_job_processing, mark_job_progress, mark_job_transcribed, set_job_meeting_type
+    from db import get_db_connection
+    from storage import cleanup_job_files, mark_job_completed, mark_job_failed, mark_job_chunk_progress, mark_job_processing, mark_job_progress, mark_job_transcribed, save_text_artifacts, set_job_meeting_type
 
 
 def run_meeting_pipeline(job_id: str, audio_path: Path, context: str = "", meeting_type: str = "general") -> None:
@@ -49,8 +52,11 @@ def run_meeting_pipeline(job_id: str, audio_path: Path, context: str = "", meeti
         summary_seconds = time.perf_counter() - summary_started_at
         mark_job_progress(job_id, 95, "결과 정리", "결과 화면에 표시할 회의록을 정리하고 있습니다.", summary_seconds=summary_seconds)
         mark_job_completed(job_id, transcript=transcript, summary=summary)
+        transcript_path, summary_path = save_text_artifacts(job_id, str(transcript), get_summary_text(summary))
+        update_meeting_artifacts(job_id, "completed", transcript_path, summary_path)
     except Exception as exc:
         mark_job_failed(job_id, f"회의록 생성 중 오류가 발생했습니다: {exc}")
+        mark_meeting_failed(job_id, str(exc))
     finally:
         # 원본 업로드 파일은 처리 후 남기지 않아 API 서버 임시 저장소를 깨끗하게 유지합니다.
         cleanup_job_files(job_id)
@@ -87,8 +93,11 @@ def run_transcription_pipeline(
         stt_seconds = time.perf_counter() - stt_started_at
         mark_job_progress(job_id, 95, "Transcript 정리", "검토 화면에 표시할 transcript를 준비하고 있습니다.", stt_seconds=stt_seconds)
         mark_job_transcribed(job_id, transcript, structured_transcript=structured_transcript)
+        transcript_path, summary_path = save_text_artifacts(job_id, transcript, "")
+        update_meeting_artifacts(job_id, "transcript_ready", transcript_path, summary_path)
     except Exception as exc:
         mark_job_failed(job_id, f"음성 변환 중 오류가 발생했습니다: {exc}")
+        mark_meeting_failed(job_id, str(exc))
     finally:
         # 원본 업로드 파일은 처리 후 남기지 않아 API 서버 임시 저장소를 깨끗하게 유지합니다.
         cleanup_job_files(job_id)
@@ -122,8 +131,43 @@ def run_transcript_summary_pipeline(
         summary_seconds = time.perf_counter() - summary_started_at
         mark_job_progress(job_id, 90, "결과 정리", "결과 화면에 표시할 회의록을 정리하고 있습니다.", summary_seconds=summary_seconds)
         mark_job_completed(job_id, transcript=transcript, summary=summary, structured_transcript=structured_transcript)
+        transcript_path, summary_path = save_text_artifacts(job_id, transcript, get_summary_text(summary))
+        update_meeting_artifacts(job_id, "completed", transcript_path, summary_path)
     except Exception as exc:
         mark_job_failed(job_id, f"회의록 생성 중 오류가 발생했습니다: {exc}")
+        mark_meeting_failed(job_id, str(exc))
+
+
+def get_summary_text(summary: dict[str, Any]) -> str:
+    """요약 결과 dict에서 파일 저장용 회의록 텍스트를 꺼냅니다."""
+    minutes = summary.get("minutes")
+    return minutes if isinstance(minutes, str) else ""
+
+
+def update_meeting_artifacts(job_id: str, status: str, transcript_path: Path, summary_path: Path) -> None:
+    """영구 meeting row에 처리 상태와 artifact 경로를 반영합니다."""
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            UPDATE meetings
+            SET status = ?, transcript_path = ?, summary_path = ?, error = NULL
+            WHERE id = ?
+            """,
+            (status, str(transcript_path), str(summary_path), job_id),
+        )
+
+
+def mark_meeting_failed(job_id: str, error: str) -> None:
+    """영구 meeting row에 실패 상태와 에러 메시지를 저장합니다."""
+    with get_db_connection() as connection:
+        connection.execute(
+            """
+            UPDATE meetings
+            SET status = ?, error = ?
+            WHERE id = ?
+            """,
+            ("failed", error, job_id),
+        )
 
 
 def build_normalized_transcript_from_structured_payload(structured_transcript: dict[str, Any] | None) -> NormalizedTranscript | None:

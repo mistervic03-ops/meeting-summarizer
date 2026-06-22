@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, CheckCircle2, Info, Loader2 } from "lucide-react";
+import { ArrowRight, CheckCircle2, FileText, Info, Loader2 } from "lucide-react";
 import FileDropZone from "../components/FileDropZone";
 import ProgressPanel from "../components/ProgressPanel";
 import StatusPill from "../components/StatusPill";
@@ -16,6 +16,10 @@ const TRANSCRIPT_ACCEPT = ".txt,.md,text/plain,text/markdown";
 const CONTEXT_HELP_TEXT = "선택 입력입니다. 회의 목적, 고객사, 프로젝트명, 주요 용어를 짧게 적으면 요약에 참고합니다.";
 const CLOUD_MODE_HELP_TEXT = "OpenAI로 음성을 텍스트로 바꿉니다.\n비용이 발생할 수 있어 중요한 회의나 결과 비교가 필요할 때만 사용하세요.";
 type InputMode = "audio" | "text";
+
+interface UploadPageProps {
+  onShowHistory: () => void;
+}
 
 const INPUT_MODES: Array<{
   description: string;
@@ -67,7 +71,7 @@ const TRANSCRIPTION_MODES: Array<{
 /**
  * Provides the branded upload page for starting a meeting minutes job.
  */
-export default function UploadPage() {
+export default function UploadPage({ onShowHistory }: UploadPageProps) {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [contextText, setContextText] = useState("");
   const [inputMode, setInputMode] = useState<InputMode>("audio");
@@ -180,6 +184,15 @@ export default function UploadPage() {
             </p>
           </div>
           <div className="flex items-center gap-2 sm:pt-1">
+            <button
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-80 dark:bg-app-surface"
+              disabled={isBusy}
+              type="button"
+              onClick={onShowHistory}
+            >
+              <FileText size={15} />
+              지난 회의록
+            </button>
             <ThemeToggle />
             <StatusPill status={status} />
           </div>
