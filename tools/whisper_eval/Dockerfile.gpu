@@ -1,0 +1,26 @@
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+
+ARG CTRANSLATE2_VERSION=4.5.0
+ARG FASTER_WHISPER_VERSION=1.1.1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        python3 \
+        python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --upgrade pip \
+    && python3 -m pip install "ctranslate2==${CTRANSLATE2_VERSION}" \
+    && python3 -m pip install "faster-whisper==${FASTER_WHISPER_VERSION}" pydub
+
+WORKDIR /app
+
+COPY tools/whisper_eval/evaluate_whisper.py /app/evaluate_whisper.py
+
+ENTRYPOINT ["python3", "/app/evaluate_whisper.py"]

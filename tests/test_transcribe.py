@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -11,6 +12,8 @@ import types
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
+
+import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -34,6 +37,7 @@ def import_transcribe_with_fakes():
 
 transcribe = import_transcribe_with_fakes()
 from backend.services.stt import providers as stt_providers
+from backend.services.stt import transformers_whisper
 
 
 class TranscribeTests(unittest.TestCase):
@@ -43,6 +47,8 @@ class TranscribeTests(unittest.TestCase):
         """테스트 간 local Whisper model cache가 섞이지 않게 초기화합니다."""
         stt_providers.LocalWhisperProvider._model_cache.clear()
         transcribe.get_stt_provider.__globals__["LocalWhisperProvider"]._model_cache.clear()
+        transformers_whisper.reset_resident_pipeline_for_tests()
+        sys.modules["transcribe"] = transcribe
         sys.modules.pop("faster_whisper", None)
 
     def test_normalize_audio_files_accepts_single_path_or_list(self) -> None:
@@ -153,7 +159,21 @@ class TranscribeTests(unittest.TestCase):
             transcript = transcribe.transcribe_audio(audio_file)
 
         self.assertEqual(transcript, "plain text")
-        openai_mock.assert_called_once_with(audio_file, mode="plain")
+        openai_mock.assert_called_once_with(audio_file, mode="plain", progress_callback=None)
+
+    def test_transcribe_audio_provider_override_takes_precedence_over_env(self) -> None:
+        """요청별 STT provider 지정은 환경 변수보다 우선합니다."""
+        audio_file = Path("meeting.wav")
+
+        with patch.dict(os.environ, {"STT_PROVIDER": "local_gpu_whisper"}, clear=True), patch.object(
+            transcribe,
+            "_transcribe_audio_openai",
+            return_value="cloud transcript",
+        ) as openai_mock:
+            transcript = transcribe.transcribe_audio(audio_file, stt_provider="openai")
+
+        self.assertEqual(transcript, "cloud transcript")
+        openai_mock.assert_called_once_with(audio_file, mode="plain", progress_callback=None)
 
     def test_transcribe_audio_local_whisper_uses_mocked_faster_whisper(self) -> None:
         """local_whisper provider는 faster-whisper 모델을 지연 로드해 plain transcript를 반환합니다."""
@@ -221,6 +241,502 @@ class TranscribeTests(unittest.TestCase):
     def test_transcribe_audio_local_whisper_diarized_mode_fails_cleanly(self) -> None:
         """local_whisper는 아직 diarized mode를 지원하지 않음을 명확히 알립니다."""
         with patch.dict(os.environ, {"STT_PROVIDER": "local_whisper"}):
+            with self.assertRaisesRegex(NotImplementedError, "only supports plain transcription"):
+                transcribe.transcribe_audio(Path("meeting.wav"), mode="diarized")
+
+    def test_transcribe_audio_local_gpu_whisper_uses_mocked_transformers_pipeline(self) -> None:
+        """local_gpu_whisper provider는 resident Transformers pipeline을 plain chunk workflow에 연결합니다."""
+        created_pipelines: list[dict[str, object]] = []
+        inference_calls: list[tuple[str, bool, dict[str, str]]] = []
+
+        class FakeCuda:
+            def is_available(self) -> bool:
+                return True
+
+        class FakePipeline:
+            def __call__(self, audio_path: str, return_timestamps: bool, generate_kwargs: dict[str, str]):
+                inference_calls.append((audio_path, return_timestamps, generate_kwargs))
+                return {"text": f" transcript-{Path(audio_path).stem} "}
+
+        def fake_pipeline(**kwargs):
+            created_pipelines.append(kwargs)
+            return FakePipeline()
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = "float16"
+        fake_torch.bfloat16 = "bfloat16"
+        fake_torch.float32 = "float32"
+        fake_torch.cuda = FakeCuda()
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.pipeline = fake_pipeline
+
+        audio_file = Path("meeting.wav")
+        chunk_one = Path("chunk_001.wav")
+        chunk_two = Path("chunk_002.wav")
+        env = {
+            "STT_PROVIDER": "local_gpu_whisper",
+            "LOCAL_GPU_WHISPER_MODEL": "openai/whisper-large-v3-turbo",
+            "LOCAL_GPU_DEVICE": "cuda:0",
+            "LOCAL_GPU_TORCH_DTYPE": "float16",
+            "LOCAL_GPU_MAX_CONCURRENCY": "4",
+            "PLAIN_TRANSCRIPTION_CONCURRENCY": "2",
+        }
+
+        with patch.dict(os.environ, env, clear=True), patch.dict(
+            sys.modules,
+            {"torch": fake_torch, "transformers": fake_transformers},
+        ), patch.object(transcribe, "prepare_audio_files", return_value=[chunk_one, chunk_two]), patch.object(
+            transcribe, "normalize_audio_files", return_value=[audio_file]
+        ), patch.object(transcribe, "log_transcription_run_diagnostics"), patch.object(
+            transcribe, "cleanup_temp_files"
+        ):
+            transcript = transcribe.transcribe_audio(audio_file)
+
+        self.assertEqual(transcript, "transcript-chunk_001\n\ntranscript-chunk_002")
+        self.assertEqual(len(created_pipelines), 1)
+        self.assertEqual(created_pipelines[0]["model"], "openai/whisper-large-v3-turbo")
+        self.assertEqual(created_pipelines[0]["device"], "cuda:0")
+        self.assertEqual(created_pipelines[0]["torch_dtype"], "float16")
+        self.assertEqual(
+            sorted(inference_calls),
+            [
+                ("chunk_001.wav", True, {"language": "ko", "task": "transcribe"}),
+                ("chunk_002.wav", True, {"language": "ko", "task": "transcribe"}),
+            ],
+        )
+
+    def test_transcribe_audio_local_gpu_whisper_reuses_resident_pipeline(self) -> None:
+        """local_gpu_whisper provider는 같은 설정에서 pipeline을 요청마다 다시 만들지 않습니다."""
+        pipeline_load_count = 0
+
+        class FakeCuda:
+            def is_available(self) -> bool:
+                return True
+
+        class FakePipeline:
+            def __call__(self, audio_path: str, return_timestamps: bool, generate_kwargs: dict[str, str]):
+                return {"text": Path(audio_path).stem}
+
+        def fake_pipeline(**kwargs):
+            nonlocal pipeline_load_count
+            pipeline_load_count += 1
+            return FakePipeline()
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = "float16"
+        fake_torch.bfloat16 = "bfloat16"
+        fake_torch.float32 = "float32"
+        fake_torch.cuda = FakeCuda()
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.pipeline = fake_pipeline
+        env = {"STT_PROVIDER": "local_gpu_whisper", "PLAIN_TRANSCRIPTION_CONCURRENCY": "1"}
+
+        with patch.dict(os.environ, env, clear=True), patch.dict(
+            sys.modules,
+            {"torch": fake_torch, "transformers": fake_transformers},
+        ), patch.object(transcribe, "prepare_audio_files", side_effect=lambda audio_file, **kwargs: [audio_file]), patch.object(
+            transcribe, "normalize_audio_files", side_effect=lambda audio_file: [audio_file]
+        ), patch.object(transcribe, "log_transcription_run_diagnostics"), patch.object(
+            transcribe, "cleanup_temp_files"
+        ):
+            self.assertEqual(transcribe.transcribe_audio(Path("one.wav")), "one")
+            self.assertEqual(transcribe.transcribe_audio(Path("two.wav")), "two")
+
+        self.assertEqual(pipeline_load_count, 1)
+
+    def test_local_gpu_whisper_config_defaults_to_turbo_and_concurrency_three(self) -> None:
+        """local_gpu_whisper 기본 설정은 운영 후보 baseline을 사용합니다."""
+        with patch.dict(os.environ, {}, clear=True):
+            config = transformers_whisper.get_config()
+
+        self.assertEqual(config.model_name, "openai/whisper-large-v3-turbo")
+        self.assertEqual(config.max_concurrency, 3)
+        self.assertEqual(config.device, "cuda:0")
+        self.assertEqual(config.torch_dtype, "float16")
+
+    def test_local_gpu_whisper_initial_prompt_uses_only_organization_terms(self) -> None:
+        """local_gpu_whisper prompt는 canonical organization_terms만 사용합니다."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            vocabulary_file.write_text(
+                "\n".join(
+                    [
+                        "organization_terms:",
+                        "  - BigxData",
+                        "  - Agent Works",
+                        "  - bigxdata",
+                        "aliases:",
+                        "  - 비식데이터",
+                        "descriptions:",
+                        "  - BigxData is an internal company term.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "STT_VOCABULARY_PATH": str(vocabulary_file),
+                    "ENABLE_STT_VOCABULARY_HINTS": "true",
+                    "LOCAL_GPU_ENABLE_STT_PROMPT": "true",
+                },
+            ):
+                prompt = transformers_whisper.get_local_gpu_whisper_initial_prompt()
+
+        self.assertEqual(prompt, "BigxData, Agent Works")
+
+    def test_local_gpu_whisper_initial_prompt_is_disabled_by_default(self) -> None:
+        """local_gpu_whisper STT prompt는 명시적으로 켜지 않으면 비활성화됩니다."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            vocabulary_file.write_text("organization_terms:\n  - BigxData\n", encoding="utf-8")
+
+            with patch.dict(os.environ, {"STT_VOCABULARY_PATH": str(vocabulary_file)}, clear=True):
+                prompt = transformers_whisper.get_local_gpu_whisper_initial_prompt()
+
+        self.assertEqual(prompt, "")
+
+    def test_local_gpu_whisper_initial_prompt_missing_file_degrades_gracefully(self) -> None:
+        """vocabulary 파일이 없어도 local_gpu_whisper prompt는 빈 값으로 안전하게 비활성화됩니다."""
+        with patch.dict(
+            os.environ,
+            {
+                "STT_VOCABULARY_PATH": "/tmp/missing-local-gpu-stt-vocabulary.yaml",
+                "ENABLE_STT_VOCABULARY_HINTS": "true",
+                "LOCAL_GPU_ENABLE_STT_PROMPT": "true",
+            },
+        ):
+            prompt = transformers_whisper.get_local_gpu_whisper_initial_prompt()
+
+        self.assertEqual(prompt, "")
+
+    def test_local_gpu_whisper_passes_vocabulary_prompt_ids_to_pipeline(self) -> None:
+        """pipeline tokenizer가 numpy prompt ids를 반환해도 torch Tensor로 변환해 전달합니다."""
+        inference_generate_kwargs: list[dict[str, object]] = []
+        tokenizer_prompts: list[str] = []
+
+        class FakeCuda:
+            def is_available(self) -> bool:
+                return True
+
+        class FakeTensor:
+            def __init__(self, value: object, dtype: object):
+                self.value = value
+                self.dtype = dtype
+                self.device = None
+
+            def to(self, device: object | None = None, dtype: object | None = None):
+                self.device = device
+                self.dtype = dtype
+                return self
+
+        class FakeTokenizer:
+            def get_prompt_ids(self, prompt: str) -> np.ndarray:
+                tokenizer_prompts.append(prompt)
+                return np.array([101, 202], dtype=np.int64)
+
+        class FakePipeline:
+            device = "cuda:0"
+            tokenizer = FakeTokenizer()
+
+            def __call__(self, audio_path: str, return_timestamps: bool, generate_kwargs: dict[str, object]):
+                inference_generate_kwargs.append(generate_kwargs)
+                return {"text": "prompted transcript"}
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = "float16"
+        fake_torch.bfloat16 = "bfloat16"
+        fake_torch.float32 = "float32"
+        fake_torch.long = "long"
+        fake_torch.tensor = lambda value, dtype: FakeTensor(value, dtype)
+        fake_torch.cuda = FakeCuda()
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.pipeline = lambda **_kwargs: FakePipeline()
+        config = transformers_whisper.LocalGpuWhisperConfig(
+            model_name="openai/whisper-large-v3-turbo",
+            device="cuda:0",
+            torch_dtype="float16",
+            max_concurrency=1,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            vocabulary_file.write_text(
+                "\n".join(
+                    [
+                        "organization_terms:",
+                        "  - BigxData",
+                        "  - Tableau",
+                        "aliases:",
+                        "  - 태블로",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {
+                    "STT_VOCABULARY_PATH": str(vocabulary_file),
+                    "ENABLE_STT_VOCABULARY_HINTS": "true",
+                    "LOCAL_GPU_ENABLE_STT_PROMPT": "true",
+                },
+            ), patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}):
+                transcript = transformers_whisper.transcribe_file(Path("meeting.wav"), config=config)
+
+        self.assertEqual(transcript, "prompted transcript")
+        self.assertEqual(tokenizer_prompts, ["BigxData, Tableau"])
+        self.assertEqual(len(inference_generate_kwargs), 1)
+        prompt_ids = inference_generate_kwargs[0]["prompt_ids"]
+        self.assertIsInstance(prompt_ids, FakeTensor)
+        self.assertEqual(prompt_ids.dtype, "long")
+        self.assertEqual(prompt_ids.device, "cuda:0")
+        self.assertEqual(prompt_ids.value.tolist(), [101, 202])
+        self.assertEqual(inference_generate_kwargs[0]["language"], "ko")
+        self.assertEqual(inference_generate_kwargs[0]["task"], "transcribe")
+
+    def test_local_gpu_whisper_prompt_ids_uses_configured_device_when_pipeline_device_is_absent(self) -> None:
+        """pipeline device 속성이 없어도 설정된 LOCAL_GPU_DEVICE 기준으로 prompt_ids를 이동합니다."""
+        class FakeTensor:
+            def __init__(self, value: object, dtype: object):
+                self.value = value
+                self.dtype = dtype
+                self.device = None
+
+            def to(self, device: object | None = None, dtype: object | None = None):
+                self.device = device
+                self.dtype = dtype
+                return self
+
+        class FakeTokenizer:
+            def get_prompt_ids(self, prompt: str) -> list[int]:
+                return [101, 202]
+
+        class FakePipeline:
+            tokenizer = FakeTokenizer()
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.long = "long"
+        fake_torch.tensor = lambda value, dtype: FakeTensor(value, dtype)
+        config = transformers_whisper.LocalGpuWhisperConfig(
+            model_name="openai/whisper-large-v3-turbo",
+            device="cuda:0",
+            torch_dtype="float16",
+            max_concurrency=1,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            vocabulary_file.write_text("organization_terms:\n  - BigxData\n", encoding="utf-8")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "STT_VOCABULARY_PATH": str(vocabulary_file),
+                    "ENABLE_STT_VOCABULARY_HINTS": "true",
+                    "LOCAL_GPU_ENABLE_STT_PROMPT": "true",
+                },
+            ), patch.dict(sys.modules, {"torch": fake_torch}):
+                prompt_ids = transformers_whisper.build_whisper_prompt_ids(FakePipeline(), config)
+
+        self.assertIsInstance(prompt_ids, FakeTensor)
+        self.assertEqual(prompt_ids.device, "cuda:0")
+        self.assertEqual(prompt_ids.dtype, "long")
+
+    def test_local_gpu_whisper_prompt_ids_conversion_failure_degrades_to_no_prompt(self) -> None:
+        """prompt_ids 변환이 실패해도 전사는 prompt 없이 계속됩니다."""
+        inference_generate_kwargs: list[dict[str, object]] = []
+
+        class FakeCuda:
+            def is_available(self) -> bool:
+                return True
+
+        class FakeTokenizer:
+            def get_prompt_ids(self, prompt: str) -> np.ndarray:
+                return np.array([101, 202], dtype=np.int64)
+
+        class FakePipeline:
+            tokenizer = FakeTokenizer()
+
+            def __call__(self, audio_path: str, return_timestamps: bool, generate_kwargs: dict[str, object]):
+                inference_generate_kwargs.append(generate_kwargs)
+                return {"text": "unprompted transcript"}
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = "float16"
+        fake_torch.bfloat16 = "bfloat16"
+        fake_torch.float32 = "float32"
+        fake_torch.long = "long"
+        fake_torch.tensor = Mock(side_effect=TypeError("bad prompt ids"))
+        fake_torch.cuda = FakeCuda()
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.pipeline = lambda **_kwargs: FakePipeline()
+        config = transformers_whisper.LocalGpuWhisperConfig(
+            model_name="openai/whisper-large-v3-turbo",
+            device="cuda:0",
+            torch_dtype="float16",
+            max_concurrency=1,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            vocabulary_file = Path(temp_dir) / "stt_vocabulary.yaml"
+            vocabulary_file.write_text("organization_terms:\n  - BigxData\n", encoding="utf-8")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "STT_VOCABULARY_PATH": str(vocabulary_file),
+                    "ENABLE_STT_VOCABULARY_HINTS": "true",
+                    "LOCAL_GPU_ENABLE_STT_PROMPT": "true",
+                },
+            ), patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}):
+                transcript = transformers_whisper.transcribe_file(Path("meeting.wav"), config=config)
+
+        self.assertEqual(transcript, "unprompted transcript")
+        self.assertEqual(inference_generate_kwargs, [{"language": "ko", "task": "transcribe"}])
+
+    def test_local_gpu_whisper_cleanup_reduces_repeated_korean_character_artifacts(self) -> None:
+        """local_gpu_whisper cleanup은 길게 반복된 한글 음절 artifact만 줄입니다."""
+        transcript = "오늘 논의는 오오오오오오 여기서 시작합니다."
+
+        cleaned = transformers_whisper.cleanup_repetition_artifacts(transcript)
+
+        self.assertEqual(cleaned, "오늘 논의는 오 여기서 시작합니다.")
+
+    def test_local_gpu_whisper_cleanup_reduces_repeated_short_acronym_artifacts(self) -> None:
+        """local_gpu_whisper cleanup은 반복 붕괴된 짧은 acronym 나열을 줄입니다."""
+        transcript = "이번 분기 KPI, KPI, KPI, KPI 기준을 다시 봅니다. . . . . 다음 안건입니다."
+
+        cleaned = transformers_whisper.cleanup_repetition_artifacts(transcript)
+
+        self.assertEqual(cleaned, "이번 분기 KPI 기준을 다시 봅니다. 다음 안건입니다.")
+
+    def test_local_gpu_whisper_cleanup_preserves_normal_korean_conversation_repetition(self) -> None:
+        """local_gpu_whisper cleanup은 정상적인 짧은 대화 반복을 보존합니다."""
+        transcript = "네, 네. 그 부분은 맞습니다. 네, 그러면 다음으로 넘어가겠습니다."
+
+        cleaned = transformers_whisper.cleanup_repetition_artifacts(transcript)
+
+        self.assertEqual(cleaned, transcript)
+
+    def test_local_gpu_whisper_cleanup_preserves_normal_domain_terms(self) -> None:
+        """local_gpu_whisper cleanup은 정상적으로 등장한 도메인 용어를 바꾸지 않습니다."""
+        transcript = "KPI 기준으로 LLM과 SLM을 비교하고 Graph RAG 적용 범위를 논의했습니다."
+
+        cleaned = transformers_whisper.cleanup_repetition_artifacts(transcript)
+
+        self.assertEqual(cleaned, transcript)
+
+    def test_local_gpu_whisper_converts_m4a_to_wav_before_pipeline(self) -> None:
+        """Transformers pipeline에 m4a를 직접 넘기지 않고 임시 WAV를 전달합니다."""
+        inference_calls: list[str] = []
+
+        class FakeCuda:
+            def is_available(self) -> bool:
+                return True
+
+        class FakePipeline:
+            def __call__(self, audio_path: str, return_timestamps: bool, generate_kwargs: dict[str, str]):
+                inference_calls.append(audio_path)
+                return {"text": " converted transcript "}
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = "float16"
+        fake_torch.bfloat16 = "bfloat16"
+        fake_torch.float32 = "float32"
+        fake_torch.cuda = FakeCuda()
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.pipeline = lambda **_kwargs: FakePipeline()
+        config = transformers_whisper.LocalGpuWhisperConfig(
+            model_name="openai/whisper-large-v3-turbo",
+            device="cuda:0",
+            torch_dtype="float16",
+            max_concurrency=1,
+        )
+
+        with patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}), patch.object(
+            transformers_whisper.subprocess,
+            "run",
+        ) as run_mock:
+            transcript = transformers_whisper.transcribe_file(Path("meeting.m4a"), config=config)
+
+        self.assertEqual(transcript, "converted transcript")
+        run_mock.assert_called_once()
+        ffmpeg_command = run_mock.call_args.args[0]
+        self.assertEqual(ffmpeg_command[:4], ["ffmpeg", "-y", "-i", "meeting.m4a"])
+        self.assertIn("-ac", ffmpeg_command)
+        self.assertIn("1", ffmpeg_command)
+        self.assertIn("-ar", ffmpeg_command)
+        self.assertIn("16000", ffmpeg_command)
+        self.assertEqual(len(inference_calls), 1)
+        self.assertTrue(inference_calls[0].endswith(".wav"))
+        self.assertNotEqual(inference_calls[0], "meeting.m4a")
+        self.assertFalse(Path(inference_calls[0]).exists())
+
+    def test_local_gpu_whisper_uses_wav_input_without_conversion(self) -> None:
+        """이미 WAV인 chunk는 기존 경로를 그대로 pipeline에 넘깁니다."""
+        inference_calls: list[str] = []
+
+        class FakeCuda:
+            def is_available(self) -> bool:
+                return True
+
+        class FakePipeline:
+            def __call__(self, audio_path: str, return_timestamps: bool, generate_kwargs: dict[str, str]):
+                inference_calls.append(audio_path)
+                return {"text": "wav transcript"}
+
+        fake_torch = types.ModuleType("torch")
+        fake_torch.float16 = "float16"
+        fake_torch.bfloat16 = "bfloat16"
+        fake_torch.float32 = "float32"
+        fake_torch.cuda = FakeCuda()
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.pipeline = lambda **_kwargs: FakePipeline()
+        config = transformers_whisper.LocalGpuWhisperConfig(
+            model_name="openai/whisper-large-v3-turbo",
+            device="cuda:0",
+            torch_dtype="float16",
+            max_concurrency=1,
+        )
+
+        with patch.dict(sys.modules, {"torch": fake_torch, "transformers": fake_transformers}), patch.object(
+            transformers_whisper.subprocess,
+            "run",
+        ) as run_mock:
+            transcript = transformers_whisper.transcribe_file(Path("meeting.wav"), config=config)
+
+        self.assertEqual(transcript, "wav transcript")
+        run_mock.assert_not_called()
+        self.assertEqual(inference_calls, ["meeting.wav"])
+
+    def test_local_gpu_whisper_ffmpeg_failure_is_actionable(self) -> None:
+        """ffmpeg 변환 실패는 원인 파악이 가능한 RuntimeError로 감쌉니다."""
+        with patch.object(
+            transformers_whisper.subprocess,
+            "run",
+            side_effect=subprocess.CalledProcessError(1, ["ffmpeg"], stderr="invalid input"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "ffmpeg failed to convert audio.*meeting.m4a.*invalid input"):
+                transformers_whisper.prepare_audio_for_transformers(Path("meeting.m4a"))
+
+    def test_transcribe_audio_local_gpu_whisper_missing_dependency_fails_cleanly(self) -> None:
+        """torch/transformers가 없으면 runtime 준비 방법을 포함한 명확한 오류를 냅니다."""
+        with patch.dict(os.environ, {"STT_PROVIDER": "local_gpu_whisper"}, clear=True), patch.dict(
+            sys.modules,
+            {"torch": None, "transformers": None},
+        ), patch.object(transcribe, "prepare_audio_files", return_value=[Path("meeting.wav")]), patch.object(
+            transcribe, "normalize_audio_files", return_value=[Path("meeting.wav")]
+        ), patch.object(transcribe, "log_transcription_run_diagnostics"), patch.object(
+            transcribe, "cleanup_temp_files"
+        ):
+            with self.assertRaisesRegex(RuntimeError, "requires torch and transformers"):
+                transcribe.transcribe_audio(Path("meeting.wav"))
+
+    def test_transcribe_audio_local_gpu_whisper_diarized_mode_fails_cleanly(self) -> None:
+        """local_gpu_whisper는 diarized mode를 변경하지 않고 명확히 거절합니다."""
+        with patch.dict(os.environ, {"STT_PROVIDER": "local_gpu_whisper"}):
             with self.assertRaisesRegex(NotImplementedError, "only supports plain transcription"):
                 transcribe.transcribe_audio(Path("meeting.wav"), mode="diarized")
 
@@ -486,6 +1002,31 @@ class TranscribeTests(unittest.TestCase):
 
         self.assertEqual(call_order, ["chunk_001.wav", "chunk_002.wav", "chunk_003.wav"])
         self.assertEqual(transcripts, ["chunk_001", "chunk_002", "chunk_003"])
+
+    def test_plain_concurrency_reports_chunk_progress(self) -> None:
+        """plain chunk workflow는 총 청크 수와 완료 청크 수를 callback으로 알립니다."""
+        progress_events: list[tuple[int, int]] = []
+        chunks = [Path("chunk_001.wav"), Path("chunk_002.wav")]
+        stats = transcribe.TranscriptionTimingStats(
+            mode="plain",
+            model_name="mock-stt",
+            chunk_config=transcribe.AudioChunkConfig(duration_seconds=300, overlap_seconds=0),
+            concurrency=1,
+        )
+
+        with patch.object(transcribe, "transcribe_chunk", side_effect=lambda audio_file, **kwargs: audio_file.stem):
+            transcripts = transcribe.transcribe_plain_chunks_concurrently(
+                files_to_transcribe=chunks,
+                chunk_config=stats.chunk_config,
+                source_files=[Path("meeting.wav")],
+                timing_stats=stats,
+                model_name="mock-stt",
+                concurrency=1,
+                chunk_progress_callback=lambda completed, total: progress_events.append((completed, total)),
+            )
+
+        self.assertEqual(transcripts, ["chunk_001", "chunk_002"])
+        self.assertEqual(progress_events, [(0, 2), (1, 2), (2, 2)])
 
     def test_plain_concurrency_preserves_original_chunk_order(self) -> None:
         """늦게 끝난 chunk가 있어도 최종 transcript 순서는 원본 chunk 순서를 따릅니다."""

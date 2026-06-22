@@ -1,19 +1,25 @@
 import { Info } from "lucide-react";
 
 interface ContextHelpProps {
+  stopPropagation?: boolean;
   text: string;
 }
 
 /**
  * Renders a compact hover and focus help tooltip.
  */
-export default function ContextHelp({ text }: ContextHelpProps) {
+export default function ContextHelp({ stopPropagation = false, text }: ContextHelpProps) {
   return (
     <span className="group/help relative inline-flex align-middle">
       <button
         aria-label="도움말"
         className="inline-grid size-4 place-items-center rounded-sm text-slate-400 transition-colors duration-150 ease-out hover:text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100"
         type="button"
+        onClick={(event) => {
+          if (stopPropagation) {
+            event.stopPropagation();
+          }
+        }}
       >
         <Info size={13} strokeWidth={2} />
       </button>

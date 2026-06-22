@@ -1,0 +1,17 @@
+# Experimental local GPU backend overlay.
+# Stable production remains:
+#   docker compose up -d
+#
+# This overlay only swaps the backend runtime image and enables local GPU STT.
+# It assumes one FastAPI process, one resident shared Whisper model, and the
+# provider's process-local GPU inference semaphore.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend.local-gpu
+    gpus: all
+    environment:
+      STT_PROVIDER: local_gpu_whisper
+      LOCAL_GPU_MAX_CONCURRENCY: 3
+      LOCAL_GPU_ENABLE_STT_PROMPT: "false"

@@ -1,0 +1,29 @@
+# Experimental local GPU backend runtime for Spark/GB10.
+# Stable production remains Dockerfile.backend with STT_PROVIDER=openai.
+FROM nvcr.io/nvidia/pytorch:25.11-py3
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --no-cache-dir \
+    "openai>=1.0.0" \
+    anthropic \
+    "pydub>=0.25.1" \
+    "python-dotenv>=1.0.0" \
+    "fastapi>=0.115.0" \
+    "uvicorn[standard]>=0.30.0" \
+    "python-multipart>=0.0.9" \
+    transformers \
+    accelerate \
+    sentencepiece
+
+COPY . .
+
+EXPOSE 8000
+
+# Keep a single FastAPI process. The local GPU provider uses one resident model
+# with a process-local semaphore for shared inference concurrency.
+CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

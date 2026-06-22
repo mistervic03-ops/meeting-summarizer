@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { CheckCircle2, Circle, Loader2 } from "lucide-react";
 import { JobStatus, JobStatusResponse } from "../api/types";
 
@@ -12,9 +13,10 @@ interface ProgressPanelProps {
 }
 
 const DEFAULT_STEPS = [
-  { label: "파일 준비", progress: 10 },
-  { label: "내용 정리", progress: 55 },
-  { label: "회의록 작성", progress: 90 },
+  { label: "업로드 준비", progress: 10 },
+  { label: "음성 분석 준비", progress: 20 },
+  { label: "음성 변환", progress: 85 },
+  { label: "회의 요약 생성", progress: 90 },
   { label: "결과 정리", progress: 100 }
 ];
 
@@ -30,10 +32,48 @@ export default function ProgressPanel({
   steps = DEFAULT_STEPS,
   status
 }: ProgressPanelProps) {
-  const progress = status === "idle" ? 0 : jobStatus?.progress ?? 5;
-  const stage = jobStatus?.stage ?? (status === "idle" ? idleStage : pendingStage);
+  const reportedProgress = getReportedProgress(status, jobStatus);
+  const [visibleProgress, setVisibleProgress] = useState(reportedProgress);
+  const reportedStage = jobStatus?.stage ?? (status === "idle" ? idleStage : pendingStage);
+  const progress = getVisibleProgress(status, visibleProgress, reportedProgress, reportedStage);
+  const stage = getFriendlyStage(reportedStage, status);
   const message = jobStatus?.message ?? (status === "idle" ? idleMessage : pendingMessage);
   const activeStepIndex = getActiveStepIndex(steps, progress, stage, status);
+  const chunkDetail = getChunkDetail(jobStatus);
+
+  useEffect(() => {
+    setVisibleProgress((currentProgress) => {
+      const minimumProgress = getMinimumProgress(status, reportedProgress, reportedStage);
+      if (status === "idle") {
+        return 0;
+      }
+      if (status === "completed") {
+        return 100;
+      }
+      if (currentProgress - minimumProgress > 20) {
+        return minimumProgress;
+      }
+      return Math.max(minimumProgress, Math.min(currentProgress, 99));
+    });
+  }, [reportedProgress, reportedStage, status]);
+
+  useEffect(() => {
+    if (status !== "pending" && status !== "processing") {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setVisibleProgress((currentProgress) => {
+        const cap = getOptimisticProgressCap(jobStatus, status);
+        if (currentProgress >= cap) {
+          return currentProgress;
+        }
+        return Math.min(cap, currentProgress + 1);
+      });
+    }, 2500);
+
+    return () => window.clearInterval(intervalId);
+  }, [jobStatus?.stage, status]);
 
   return (
     <section className="border-y border-slate-300 py-3">
@@ -44,7 +84,26 @@ export default function ProgressPanel({
         <div className="min-w-0">
           <h2 className="text-[12px] font-semibold text-slate-950">{stage}</h2>
           <p className="mt-0.5 break-words text-[11px] leading-4 text-slate-500">{message}</p>
+          {chunkDetail ? <p className="mt-1 text-[11px] font-medium leading-4 text-brand-700 dark:text-app-accent">{chunkDetail}</p> : null}
         </div>
+      </div>
+
+      <div className="mt-3">
+        <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-app-field">
+          <div
+            aria-label="작업 진행률"
+            aria-valuemax={100}
+            aria-valuemin={0}
+            aria-valuenow={Math.round(progress)}
+            className={[
+              "h-full rounded-full transition-all duration-500 ease-out",
+              status === "failed" ? "bg-red-500" : "bg-brand-600 dark:bg-app-accent"
+            ].join(" ")}
+            role="progressbar"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <p className="mt-1 text-right text-[11px] font-medium text-slate-500">{Math.round(progress)}%</p>
       </div>
 
       <div className="mt-2 divide-y divide-slate-100">
@@ -83,6 +142,126 @@ export default function ProgressPanel({
 }
 
 type StepState = "active" | "done" | "pending";
+
+function getReportedProgress(status: JobStatus, jobStatus: JobStatusResponse | null): number {
+  if (status === "idle") {
+    return 0;
+  }
+  if (status === "completed") {
+    return 100;
+  }
+  const chunkProgress = isChunkProgressActive(jobStatus) ? getChunkProgress(jobStatus) : null;
+  if (chunkProgress !== null) {
+    return chunkProgress;
+  }
+  return jobStatus?.progress ?? 5;
+}
+
+function getMinimumProgress(status: JobStatus, reportedProgress: number, stage: string): number {
+  if (status === "completed") {
+    return 100;
+  }
+  if (status === "failed") {
+    return reportedProgress;
+  }
+  if (status === "pending") {
+    return Math.max(reportedProgress, 10);
+  }
+  if (status === "processing") {
+    if (stage.includes("결과 정리") || stage.includes("Transcript 정리")) {
+      return Math.max(reportedProgress, 90);
+    }
+    if (stage.includes("회의록 작성") || stage.includes("요약")) {
+      return Math.max(reportedProgress, 75);
+    }
+    if (stage.includes("음성 변환")) {
+      return Math.max(reportedProgress, 20);
+    }
+    return Math.max(reportedProgress, 15);
+  }
+  return reportedProgress;
+}
+
+function getVisibleProgress(status: JobStatus, visibleProgress: number, reportedProgress: number, stage: string): number {
+  if (status === "completed") {
+    return 100;
+  }
+  if (status === "idle") {
+    return 0;
+  }
+  return Math.max(getMinimumProgress(status, reportedProgress, stage), Math.min(visibleProgress, 99));
+}
+
+function getOptimisticProgressCap(jobStatus: JobStatusResponse | null, status: JobStatus): number {
+  if (status === "pending") {
+    return 15;
+  }
+  const chunkProgress = isChunkProgressActive(jobStatus) ? getChunkProgress(jobStatus) : null;
+  if (chunkProgress !== null) {
+    return Math.min(85, chunkProgress + 2);
+  }
+
+  const stage = jobStatus?.stage ?? "";
+  if (stage.includes("회의록 작성") || stage.includes("요약")) {
+    return 90;
+  }
+  if (stage.includes("결과 정리") || stage.includes("Transcript 정리")) {
+    return 96;
+  }
+  if (stage.includes("음성 변환")) {
+    return 85;
+  }
+  if (stage.includes("파일 준비")) {
+    return 20;
+  }
+  return 70;
+}
+
+function getFriendlyStage(stage: string, status: JobStatus): string {
+  if (status === "idle") {
+    return stage;
+  }
+  if (status === "failed") {
+    return "처리 실패";
+  }
+  if (status === "completed") {
+    return stage;
+  }
+  if (stage.includes("파일 준비")) {
+    return "음성 분석 준비 중";
+  }
+  if (stage.includes("음성 변환")) {
+    return "음성 변환 중";
+  }
+  if (stage.includes("회의록 작성") || stage.includes("요약")) {
+    return "회의 요약 생성 중";
+  }
+  if (stage.includes("결과 정리") || stage.includes("Transcript 정리")) {
+    return "결과 정리 중";
+  }
+  return stage;
+}
+
+function getChunkDetail(jobStatus: JobStatusResponse | null): string {
+  if (!isChunkProgressActive(jobStatus) || jobStatus?.completed_chunks == null || !jobStatus.total_chunks || jobStatus.total_chunks <= 1) {
+    return "";
+  }
+
+  return `음성 변환 중 · ${jobStatus.completed_chunks}/${jobStatus.total_chunks} 구간 완료`;
+}
+
+function getChunkProgress(jobStatus: JobStatusResponse | null): number | null {
+  if (jobStatus?.completed_chunks == null || !jobStatus.total_chunks || jobStatus.total_chunks <= 0) {
+    return null;
+  }
+
+  const completedRatio = Math.max(0, Math.min(jobStatus.completed_chunks, jobStatus.total_chunks)) / jobStatus.total_chunks;
+  return 20 + Math.round(completedRatio * 65);
+}
+
+function isChunkProgressActive(jobStatus: JobStatusResponse | null): boolean {
+  return Boolean(jobStatus?.stage.includes("음성 변환") && jobStatus.status !== "completed");
+}
 
 /**
  * Returns the step index that should be emphasized as the current user-visible stage.

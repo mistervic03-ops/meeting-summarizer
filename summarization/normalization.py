@@ -9,6 +9,19 @@ from summarization.models import NormalizedTranscript, PreprocessedTranscript, T
 
 
 FILLER_TOKENS = {"아", "음", "네네", "어"}
+PLAIN_HEADING_LABEL_KEYS = {
+    "회의목적",
+    "목적",
+    "안건",
+    "이슈",
+    "결론",
+    "참석자",
+    "참여자",
+    "todo",
+    "api",
+    "q",
+    "a",
+}
 
 SPEAKER_LINE_PATTERN = re.compile(
     r"^\s*(?:\[(?P<bracket_speaker>[^\]]{1,40})\]|(?P<speaker>[^:：\n]{1,40}))\s*[:：]\s*(?P<text>.*)$"
@@ -42,7 +55,7 @@ def normalize_transcript(transcript: str) -> NormalizedTranscript:
             text = match.group("text").strip()
 
             # 날짜나 시간처럼 보이는 값이 speaker로 오인되면 일반 문장으로 되돌립니다.
-            if not re.fullmatch(r"[\d\s./:-]+", speaker):
+            if not re.fullmatch(r"[\d\s./:-]+", speaker) and not is_plain_heading_label(speaker):
                 parsed_utterances.append((speaker, text, raw_line))
                 continue
 
@@ -93,6 +106,12 @@ def normalize_transcript(transcript: str) -> NormalizedTranscript:
         for utterance in normalized_utterances
     ]
     return NormalizedTranscript(normalized_utterances, "\n".join(lines).strip(), meeting_date)
+
+
+def is_plain_heading_label(label: str) -> bool:
+    """plain transcript heading/key label로 알려진 값인지 반환합니다."""
+    label_key = re.sub(r"\s+", "", label.strip()).casefold()
+    return label_key in PLAIN_HEADING_LABEL_KEYS
 
 
 def structured_transcript_payload_to_normalized_transcript(payload: object) -> NormalizedTranscript:

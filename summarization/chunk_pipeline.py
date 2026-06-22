@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from summarization.chunking import segment_transcript
@@ -22,6 +23,7 @@ def extract_structure_by_chunks(
     max_utterances: int = 80,
     overlap_utterances: int = 8,
     meeting_type: str = "general",
+    glossary_terms: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """정규화된 전사문을 chunk별로 구조 추출한 뒤 단순 병합합니다."""
     chunks = segment_transcript(
@@ -43,7 +45,15 @@ def extract_structure_by_chunks(
             chunk.end_utterance_id,
         )
         started_at = time.perf_counter()
-        structures.append(extract_structure(chunk.text, meeting_date, context, meeting_type=meeting_type))
+        structures.append(
+            extract_structure(
+                chunk.text,
+                meeting_date,
+                context,
+                meeting_type=meeting_type,
+                glossary_terms=glossary_terms,
+            )
+        )
         logger.info(
             "chunk_extraction chunk_id=%s completed in %.3fs",
             chunk.chunk_id,

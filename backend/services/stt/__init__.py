@@ -1,6 +1,7 @@
 """STT provider 선택을 위한 작은 진입점입니다."""
 
 from backend.services.stt.providers import (
+    LocalGpuWhisperProvider,
     LocalWhisperProvider,
     OpenAITranscribeProvider,
     TranscribeProvider,
@@ -9,6 +10,7 @@ from backend.services.stt.providers import (
 )
 
 __all__ = [
+    "LocalGpuWhisperProvider",
     "LocalWhisperProvider",
     "OpenAITranscribeProvider",
     "TranscribeProvider",

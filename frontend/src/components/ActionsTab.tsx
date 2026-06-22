@@ -6,11 +6,9 @@ import { normalizeDisplayText } from "../utils/displayText";
  * Renders one action item card with owner, due date, and confidence state.
  */
 function ActionItemCard({ isQuiet, item }: { isQuiet?: boolean; item: ActionItem }) {
-  const owner = item.owner?.trim() || "담당자 미지정";
-  const dueDate = item.due_date?.trim() || "기한 미정";
+  const owner = getMeaningfulMetadata(item.owner);
+  const dueDate = getMeaningfulMetadata(item.due_date);
   const task = normalizeDisplayText(item.task);
-  const hasOwner = Boolean(item.owner?.trim());
-  const hasDueDate = Boolean(item.due_date?.trim());
   const isLowConfidence = item.confidence === "low";
 
   return (
@@ -20,38 +18,26 @@ function ActionItemCard({ isQuiet, item }: { isQuiet?: boolean; item: ActionItem
         isQuiet ? "py-2.5" : "py-3"
       ].join(" ")}
     >
-      <div className="grid gap-2.5 lg:grid-cols-[minmax(0,1fr)_132px_132px_76px] lg:items-start">
-        <div className="min-w-0">
-          <p className="mb-0.5 text-[11px] font-medium text-slate-400 dark:text-app-subtle lg:hidden">할 일</p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
           <h2 className={`break-words font-semibold leading-[1.58] text-slate-950 dark:text-app-text ${isQuiet ? "text-[13px]" : "text-[14px]"}`}>{task}</h2>
+          {owner || dueDate ? (
+            <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[12px] leading-5 text-slate-500 dark:text-app-muted">
+              {owner ? (
+                <span className="min-w-0 break-words">
+                  <span className="text-slate-400 dark:text-app-subtle">담당자</span> {owner}
+                </span>
+              ) : null}
+              {dueDate ? (
+                <span className="min-w-0 break-words">
+                  <span className="text-slate-400 dark:text-app-subtle">기한</span> {dueDate}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
-        <div className="min-w-0">
-          <p className="mb-0.5 text-[11px] font-medium text-slate-400 dark:text-app-subtle lg:hidden">담당자</p>
-          <span
-            className={[
-              "block max-w-full min-w-0 break-words text-[13px] leading-[1.55]",
-              hasOwner ? "text-slate-600 dark:text-app-muted" : "font-semibold text-amber-700 dark:text-app-warning"
-            ].join(" ")}
-          >
-            {owner}
-          </span>
-        </div>
-
-        <div className="min-w-0">
-          <p className="mb-0.5 text-[11px] font-medium text-slate-400 dark:text-app-subtle lg:hidden">기한</p>
-          <span
-            className={[
-              "block max-w-full min-w-0 break-words text-[13px] leading-[1.55]",
-              hasDueDate ? "text-slate-600 dark:text-app-muted" : "font-semibold text-amber-700 dark:text-app-warning"
-            ].join(" ")}
-          >
-            {dueDate}
-          </span>
-        </div>
-
-        <div className="min-w-0">
-          <p className="mb-0.5 text-[11px] font-medium text-slate-400 dark:text-app-subtle lg:hidden">상태</p>
+        <div className="shrink-0">
           <span
             className={[
               "inline-flex rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
@@ -82,15 +68,18 @@ export default function ActionsTab({ isQuiet = false, items }: { isQuiet?: boole
 
   return (
     <section className={`${isQuiet ? "border-y border-slate-200 dark:border-app-line" : "border-y border-slate-300 dark:border-app-border"} bg-transparent`}>
-      <div className="hidden grid-cols-[minmax(0,1fr)_132px_132px_76px] gap-2.5 border-b border-slate-200 px-1 py-2.5 text-[11px] font-semibold text-slate-500 dark:border-app-line dark:text-app-muted lg:grid">
-        <span>할 일</span>
-        <span>담당자</span>
-        <span>기한</span>
-        <span>상태</span>
-      </div>
       {items.map((item, index) => (
         <ActionItemCard key={`${item.task}-${index}`} isQuiet={isQuiet} item={item} />
       ))}
     </section>
   );
+}
+
+function getMeaningfulMetadata(value?: string): string {
+  const normalizedValue = normalizeDisplayText(value ?? "");
+  const key = normalizedValue.replace(/\s+/g, "").toLowerCase();
+  if (!key || ["미정", "검토필요", "확인필요"].includes(key)) {
+    return "";
+  }
+  return normalizedValue;
 }

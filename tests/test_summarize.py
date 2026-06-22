@@ -6,10 +6,11 @@ import importlib
 import json
 import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -277,6 +278,85 @@ class SummarizeTests(unittest.TestCase):
 
         self.assertEqual(normalized.text, "오늘 회의는 네 가지 안건입니다.")
         self.assertEqual(normalized.render_for_llm(), "[u_0001] Unknown: 오늘 회의는 네 가지 안건입니다.")
+
+    def test_normalize_transcript_treats_common_colon_headings_as_plain_text(self) -> None:
+        """plain transcript의 일반 heading/key label은 speaker로 보지 않습니다."""
+        heading_lines = [
+            "회의 목적: KT와 향후 협력 방향 논의",
+            "안건: Tableau 대시보드 전환",
+            "이슈: Salesforce 연동 지연",
+            "TODO: MCP 검토",
+            "API: 응답 속도 확인 필요",
+            "Q: 이 방식이 가능한가요?",
+            "A: 가능합니다",
+            "결론: 다음 주 POC 진행",
+            "참석자: 홍길동, 김철수",
+        ]
+
+        for line in heading_lines:
+            with self.subTest(line=line):
+                normalized = summarize.normalize_transcript(line)
+
+                self.assertEqual(len(normalized.utterances), 1)
+                self.assertIsNone(normalized.utterances[0].speaker)
+                self.assertEqual(normalized.utterances[0].text, line)
+                self.assertEqual(normalized.text, line)
+
+    def test_normalize_transcript_plain_heading_does_not_create_speaker_continuation(self) -> None:
+        """denylist heading 다음 plain 줄은 fake speaker의 continuation이 되지 않습니다."""
+        transcript = """
+회의 목적: KT와 향후 협력 방향 논의
+추가 논의 범위를 확인합니다.
+김민수: 배포 확인
+""".strip()
+
+        normalized = summarize.normalize_transcript(transcript)
+
+        self.assertEqual([utterance.speaker for utterance in normalized.utterances], [None, None, "김민수"])
+        self.assertEqual(normalized.utterances[0].text, "회의 목적: KT와 향후 협력 방향 논의")
+        self.assertEqual(normalized.utterances[1].text, "추가 논의 범위를 확인합니다.")
+        self.assertEqual(normalized.utterances[2].text, "배포 확인")
+        self.assertEqual(
+            normalized.render_for_llm(),
+            "\n".join(
+                [
+                    "[u_0001] Unknown: 회의 목적: KT와 향후 협력 방향 논의",
+                    "[u_0002] Unknown: 추가 논의 범위를 확인합니다.",
+                    "[u_0003] 김민수: 배포 확인",
+                ]
+            ),
+        )
+
+    def test_normalize_transcript_preserves_real_speaker_labels_after_heading_denylist(self) -> None:
+        """실제 speaker label은 plain heading denylist와 별개로 계속 보존합니다."""
+        transcript = """
+Speaker 1: 배포 확인
+[Speaker 1]: 추가 확인
+김민수: 품질 검수
+영업담당자: 고객 공유
+""".strip()
+
+        normalized = summarize.normalize_transcript(transcript)
+
+        self.assertEqual(
+            [utterance.speaker for utterance in normalized.utterances],
+            ["Speaker 1", "김민수", "영업담당자"],
+        )
+        self.assertEqual(normalized.utterances[0].text, "배포 확인 추가 확인")
+        self.assertEqual(normalized.utterances[1].text, "품질 검수")
+        self.assertEqual(normalized.utterances[2].text, "고객 공유")
+
+    def test_is_plain_heading_label_matches_narrow_denylist(self) -> None:
+        """heading denylist는 공백과 대소문자를 정규화하되 실제 speaker label은 제외합니다."""
+        from summarization.normalization import is_plain_heading_label
+
+        self.assertTrue(is_plain_heading_label("회의 목적"))
+        self.assertTrue(is_plain_heading_label("회의목적"))
+        self.assertTrue(is_plain_heading_label("To Do"))
+        self.assertTrue(is_plain_heading_label("API"))
+        self.assertFalse(is_plain_heading_label("Speaker 1"))
+        self.assertFalse(is_plain_heading_label("김민수"))
+        self.assertFalse(is_plain_heading_label("영업담당자"))
 
     def test_structured_transcript_payload_to_normalized_transcript_preserves_metadata(self) -> None:
         """structured transcript payload는 발화 ID, 화자, timestamp를 보존합니다."""
@@ -695,7 +775,13 @@ class SummarizeTests(unittest.TestCase):
             events.append("segment")
             return chunks
 
-        def extract_side_effect(chunk_text: str, meeting_date: str, context: str = "", meeting_type: str = "general"):
+        def extract_side_effect(
+            chunk_text: str,
+            meeting_date: str,
+            context: str = "",
+            meeting_type: str = "general",
+            glossary_terms: list[str] | None = None,
+        ):
             """호출 순서를 확인하기 위해 extract 이벤트를 기록합니다."""
             events.append(f"extract:{chunk_text}")
             if chunk_text == "김민수: 첫 번째 논의":
@@ -716,13 +802,26 @@ class SummarizeTests(unittest.TestCase):
                 context="VIP 프로젝트",
                 max_utterances=1,
                 overlap_utterances=0,
+                glossary_terms=["BigQuery"],
             )
 
         self.assertEqual(result, merged_structure)
         segment_mock.assert_called_once_with(normalized, max_utterances=1, overlap_utterances=0)
         self.assertEqual(extract_mock.call_count, 2)
-        extract_mock.assert_any_call("김민수: 첫 번째 논의", "2026-05-14", "VIP 프로젝트", meeting_type="general")
-        extract_mock.assert_any_call("이서연: 두 번째 논의", "2026-05-14", "VIP 프로젝트", meeting_type="general")
+        extract_mock.assert_any_call(
+            "김민수: 첫 번째 논의",
+            "2026-05-14",
+            "VIP 프로젝트",
+            meeting_type="general",
+            glossary_terms=["BigQuery"],
+        )
+        extract_mock.assert_any_call(
+            "이서연: 두 번째 논의",
+            "2026-05-14",
+            "VIP 프로젝트",
+            meeting_type="general",
+            glossary_terms=["BigQuery"],
+        )
         merge_mock.assert_called_once_with([first_structure, second_structure])
         self.assertEqual(
             events,
@@ -872,12 +971,18 @@ class SummarizeTests(unittest.TestCase):
         profile_mock.assert_called_once()
         self.assertEqual(profile_mock.call_args.args[0].text, "정리된 transcript")
         strategy_mock.assert_called_once_with(profile)
-        extract_mock.assert_called_once_with("[u_0001] Unknown: 정리된 transcript", "2026-05-14", "", "general")
+        extract_mock.assert_called_once_with(
+            "[u_0001] Unknown: 정리된 transcript",
+            "2026-05-14",
+            "",
+            "general",
+            glossary_terms=ANY,
+        )
         validate_mock.assert_called_once()
         self.assertEqual(validate_mock.call_args.args[0], structure)
         self.assertEqual(validate_mock.call_args.args[1], "정리된 transcript")
         self.assertEqual(validate_mock.call_args.args[2].text, "정리된 transcript")
-        generate_mock.assert_called_once_with("정리된 transcript", structure, "", "general")
+        generate_mock.assert_called_once_with("정리된 transcript", structure, "", "general", glossary_terms=ANY)
         render_mock.assert_called_once_with(structure, "자연어 회의록", "general")
         self.assertTrue(any(call.args == ("summarize_transcript selected_strategy=%s", "direct") for call in log_mock.call_args_list))
         self.assertTrue(
@@ -939,11 +1044,12 @@ class SummarizeTests(unittest.TestCase):
             "2026-05-14",
             "",
             "general",
+            glossary_terms=ANY,
         )
         validate_mock.assert_called_once()
         self.assertEqual(validate_mock.call_args.args[1], normalized.text)
         self.assertIs(validate_mock.call_args.args[2], normalized)
-        generate_mock.assert_called_once_with(normalized.text, structure, "", "general")
+        generate_mock.assert_called_once_with(normalized.text, structure, "", "general", glossary_terms=ANY)
 
     def test_summarize_transcript_uses_chunk_extraction_for_chunk_strategy(self) -> None:
         """chunk 전략은 chunk runner 결과를 merge 후 validation으로 한 번만 넘깁니다."""
@@ -980,13 +1086,39 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(meeting_date_arg, "2026-05-14")
         self.assertEqual(context_arg, "")
         self.assertEqual(chunk_runner_mock.call_args.kwargs["meeting_type"], "general")
+        self.assertEqual(chunk_runner_mock.call_args.kwargs["glossary_terms"], summarize.get_summary_glossary_terms())
         validate_mock.assert_called_once()
         self.assertEqual(validate_mock.call_args.args[0], chunk_structure)
         self.assertEqual(validate_mock.call_args.args[1], "정리된 transcript")
         self.assertEqual(validate_mock.call_args.args[2].text, "정리된 transcript")
-        generate_mock.assert_called_once_with("정리된 transcript", validated_structure, "", "general")
+        generate_mock.assert_called_once_with("정리된 transcript", validated_structure, "", "general", glossary_terms=ANY)
         render_mock.assert_called_once_with(validated_structure, "자연어 회의록", "general")
         self.assertTrue(any(call.args == ("summarize_transcript using chunk extraction path",) for call in log_mock.call_args_list))
+
+    def test_summarize_transcript_loads_glossary_once_for_chunk_extraction(self) -> None:
+        """chunk 경로에서도 요약 용어집은 summarize_transcript 단위로 한 번만 로드됩니다."""
+        transcript = "\n".join(f"김민수: {index}번째 확인하겠습니다." for index in range(100))
+        structure = empty_track_b_structure()
+        glossary_terms = ["BigQuery", "Tableau"]
+
+        with patch.object(summarize, "get_summary_glossary_terms", return_value=glossary_terms) as glossary_mock, patch.object(
+            summarize,
+            "extract_structure_by_chunks",
+            create=True,
+            return_value=structure,
+        ) as chunk_runner_mock, patch.object(
+            summarize, "validate_structure", return_value=structure
+        ), patch.object(
+            summarize, "generate_minutes", return_value="자연어 회의록"
+        ) as generate_mock, patch.object(
+            summarize, "render_output", return_value="최종 출력"
+        ):
+            summarize.summarize_transcript(transcript)
+
+        glossary_mock.assert_called_once_with()
+        chunk_runner_mock.assert_called_once()
+        self.assertEqual(chunk_runner_mock.call_args.kwargs["glossary_terms"], glossary_terms)
+        generate_mock.assert_called_once_with(ANY, structure, "", "general", glossary_terms=glossary_terms)
 
     def test_summarize_transcript_cleans_chunk_public_warnings(self) -> None:
         """chunk mode에서 병합된 raw warning도 공개 결과에서는 표시용 문장으로 정리합니다."""
@@ -1092,12 +1224,18 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(result["minutes"], "최종 출력")
         self.assertEqual(result["summary_facts"], [])
         self.assertEqual(result["action_items"], [])
-        extract_mock.assert_called_once_with("[u_0001] Unknown: 정리된 transcript", "2026-05-14", "", "general")
+        extract_mock.assert_called_once_with(
+            "[u_0001] Unknown: 정리된 transcript",
+            "2026-05-14",
+            "",
+            "general",
+            glossary_terms=ANY,
+        )
         validate_mock.assert_called_once()
         self.assertEqual(validate_mock.call_args.args[0], structure)
         self.assertEqual(validate_mock.call_args.args[1], "정리된 transcript")
         self.assertEqual(validate_mock.call_args.args[2].text, "정리된 transcript")
-        generate_mock.assert_called_once_with("정리된 transcript", structure, "", "general")
+        generate_mock.assert_called_once_with("정리된 transcript", structure, "", "general", glossary_terms=ANY)
         render_mock.assert_called_once_with(structure, "자연어 회의록", "general")
 
     def test_summarize_transcript_passes_context_to_model_steps(self) -> None:
@@ -1114,8 +1252,14 @@ class SummarizeTests(unittest.TestCase):
         ) as generate_mock, patch.object(summarize, "render_output", return_value="최종 출력"):
             summarize.summarize_transcript("raw transcript", context="VIP 프로젝트: 중요 고객")
 
-        extract_mock.assert_called_once_with("[u_0001] Unknown: 정리된 transcript", "2026-05-14", "VIP 프로젝트: 중요 고객", "general")
-        generate_mock.assert_called_once_with("정리된 transcript", structure, "VIP 프로젝트: 중요 고객", "general")
+        extract_mock.assert_called_once_with(
+            "[u_0001] Unknown: 정리된 transcript",
+            "2026-05-14",
+            "VIP 프로젝트: 중요 고객",
+            "general",
+            glossary_terms=ANY,
+        )
+        generate_mock.assert_called_once_with("정리된 transcript", structure, "VIP 프로젝트: 중요 고객", "general", glossary_terms=ANY)
 
     def test_summarize_transcript_passes_meeting_type_to_extraction(self) -> None:
         """meeting_type은 구조 추출 단계까지 전달됩니다."""
@@ -1131,8 +1275,14 @@ class SummarizeTests(unittest.TestCase):
         ) as generate_mock, patch.object(summarize, "render_output", return_value="최종 출력") as render_mock:
             summarize.summarize_transcript("raw transcript", meeting_type="technical_review")
 
-        extract_mock.assert_called_once_with("[u_0001] Unknown: 정리된 transcript", "2026-05-14", "", "technical_review")
-        generate_mock.assert_called_once_with("정리된 transcript", structure, "", "technical_review")
+        extract_mock.assert_called_once_with(
+            "[u_0001] Unknown: 정리된 transcript",
+            "2026-05-14",
+            "",
+            "technical_review",
+            glossary_terms=ANY,
+        )
+        generate_mock.assert_called_once_with("정리된 transcript", structure, "", "technical_review", glossary_terms=ANY)
         render_mock.assert_called_once_with(structure, "자연어 회의록", "technical_review")
 
     def test_summarize_transcript_defaults_unknown_meeting_type_to_general(self) -> None:
@@ -1149,7 +1299,13 @@ class SummarizeTests(unittest.TestCase):
         ), patch.object(summarize, "render_output", return_value="최종 출력"):
             summarize.summarize_transcript("raw transcript", meeting_type="unknown")
 
-        extract_mock.assert_called_once_with("[u_0001] Unknown: 정리된 transcript", "2026-05-14", "", "general")
+        extract_mock.assert_called_once_with(
+            "[u_0001] Unknown: 정리된 transcript",
+            "2026-05-14",
+            "",
+            "general",
+            glossary_terms=ANY,
+        )
 
     def test_summarize_transcript_rejects_empty_input(self) -> None:
         """빈 transcript는 명확한 에러로 실패합니다."""
@@ -1211,6 +1367,7 @@ class SummarizeTests(unittest.TestCase):
         with patch.dict(
             extraction_globals,
             {
+                "get_summarization_provider": Mock(return_value="openai"),
                 "create_openai_client": Mock(return_value=fake_client),
                 "request_structured_structure": request_mock,
             },
@@ -1221,18 +1378,49 @@ class SummarizeTests(unittest.TestCase):
         request_mock.assert_called_once()
         self.assertIn("정리된 transcript", request_mock.call_args.args[1])
 
+    def test_extract_structure_can_use_claude_provider(self) -> None:
+        """SUMMARIZATION_PROVIDER=claude이면 구조 추출은 Claude 요청 함수로 분기합니다."""
+        request_mock = Mock(return_value={**empty_track_b_structure(), "warnings": ["Claude 확인"]})
+        openai_client_mock = Mock()
+        extraction_globals = summarize.extract_structure.__globals__
+        with patch.dict(
+            extraction_globals,
+            {
+                "get_summarization_provider": Mock(return_value="claude"),
+                "create_openai_client": openai_client_mock,
+                "request_claude_structured_structure": request_mock,
+            },
+        ):
+            result = summarize.extract_structure("정리된 transcript", "2026-05-14")
+
+        self.assertEqual(result["warnings"], ["Claude 확인"])
+        openai_client_mock.assert_not_called()
+        request_mock.assert_called_once()
+        self.assertIn("정리된 transcript", request_mock.call_args.args[0])
+
     def test_build_extraction_prompt_contains_required_principles(self) -> None:
         """구조 추출 프롬프트가 Track B warning 원칙을 포함합니다."""
         prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14")
 
         self.assertIn("회의 날짜: 2026-05-14", prompt)
         self.assertIn("회의 유형: general", prompt)
-        self.assertIn("일반 회의입니다", prompt)
+        self.assertIn("회의 유형은 요약의 강조점을 정하기 위한 참고 정보", prompt)
+        self.assertIn("일반 회의에서는 명확한 실행 약속", prompt)
         self.assertIn("스키마에 없는 필드는 생성하지 마세요", prompt)
         self.assertIn("due_date는 확실한 절대 날짜가 원문에 직접 나온 경우가 아니면 ISO 날짜로 바꾸지 말고", prompt)
         self.assertIn("\"금요일 오후 3시\"", prompt)
-        self.assertIn("summary_facts에는 회의 요약", prompt)
+        self.assertIn("summary_facts는 SummaryTab의 빠른 개요에 쓰는 3~6개의 상위 수준 bullet", prompt)
+        self.assertIn("summary_facts에는 회의 전체를 이해하는 데 필요한 핵심 맥락과 결과", prompt)
+        self.assertIn("언급된 모든 사실, 예시, 수치, 질문, 고객 관심사, 기술 세부사항, 운영 조건", prompt)
+        self.assertIn("summary_facts를 늘리지 말고 speaker_highlights에 남기세요", prompt)
+        self.assertIn("삭제하지 말고 speaker_highlights나 전체 회의록 맥락에서 보존", prompt)
+        self.assertIn("사람이 검토하고 판단하기 쉽게 논의 구조를 정리", prompt)
         self.assertIn("decisions에는 명확한 결정", prompt)
+        self.assertIn("확정된 결정과 논의된 방향성을 구분", prompt)
+        self.assertIn("명시적 합의, 승인, 결정 표현이 있는 확정 결정", prompt)
+        self.assertIn("결정 후보로 명확히 다룬 미확정 decision candidate", prompt)
+        self.assertIn("기술 방향, 제품 설명, 협력 가능성, 고객 관심사, 기술적 가능성", prompt)
+        self.assertIn("decisions에 넣지 말고 summary_facts나 speaker_highlights", prompt)
         self.assertIn("decisions의 decision은 회의록에 바로 표시 가능한 자연스러운 한국어 결정사항", prompt)
         self.assertIn("decisions의 decision에 원문 발화를 그대로 복사하지 마세요", prompt)
         self.assertIn("내부 구현 표현처럼 보이는 merge, schema, validation", prompt)
@@ -1250,6 +1438,9 @@ class SummarizeTests(unittest.TestCase):
         self.assertIn("\"공유해 주세요\"", prompt)
         self.assertIn("closing recap이나 중간 정리에서 다시 언급된 항목", prompt)
         self.assertIn("\"~하기로 했다\", \"~담당\", \"~까지 완료\"", prompt)
+        self.assertIn("action_items는 명시적 요청, 실행 약속, 담당 지정, 기한, 구체적인 다음 단계 합의", prompt)
+        self.assertIn("약한 관심 표현, 탐색적 후속 논의, 제품 사용 사례, 아키텍처 논의", prompt)
+        self.assertIn("action_item으로 단정하지 말고 논의 포인트나 follow-up 후보로 speaker_highlights", prompt)
         self.assertIn("action_items의 task는 5~20자 내외의 짧은 업무명", prompt)
         self.assertIn("task에 담당자 이름, 기한, 원문 문장 전체를 넣지 마세요", prompt)
         self.assertIn("owner, due_date, source_quote 필드로 각각 분리", prompt)
@@ -1264,14 +1455,23 @@ class SummarizeTests(unittest.TestCase):
         self.assertIn("삭제하지 말고 confidence를 low", prompt)
         self.assertIn("1인칭으로 업무 수행을 말하면 owner는 \"제가\"나 \"저희\"가 아니라 해당 speaker label", prompt)
         self.assertIn("owner는 \"영업담당자\"", prompt)
-        self.assertIn("speaker label이 \"Speaker 2\"처럼 익명이어도 owner로 사용할 수 있습니다", prompt)
+        self.assertIn("\"Unknown\"은 실제 speaker나 owner가 아닙니다", prompt)
+        self.assertIn("owner로 사용하지 마세요", prompt)
+        self.assertIn("owner 근거가 \"Unknown\"뿐이거나 speaker label이 없으면 owner는 \"미정\"", prompt)
+        self.assertIn("\"Speaker 1\", \"Speaker 2\" 같은 speaker label은 transcript에 실제 source speaker label", prompt)
         self.assertIn("owner가 실제로 \"미정\"일 때만 담당자 확인 warning", prompt)
         self.assertIn("confidence가 low인 항목은 warnings에 추가", prompt)
         self.assertIn("due_date는 \"미정\"으로 두고 warnings에 추가", prompt)
         self.assertIn("speaker label이 있는 1인칭 발화에서 owner가 speaker label로 해결되면 담당자 확인 warning을 만들지 마세요", prompt)
         self.assertIn("owner에 \"저\", \"제가\", \"저희\" 같은 1인칭 표현 자체를 쓰지 마세요", prompt)
         self.assertIn("owner와 due_date가 둘 다 명확할 때만 \"high\"", prompt)
-        self.assertIn("speaker_highlights에는 주요 발언", prompt)
+        self.assertIn("주요 발언/논의 포인트", prompt)
+        self.assertIn("speaker_highlights에는 주요 발언 또는 논의 포인트", prompt)
+        self.assertIn("summary_facts에 넣기에는 세부적인 기술 설명, 고객 관심사, 열린 질문, 리스크, 예시, 수치, follow-up 후보", prompt)
+        self.assertIn("신뢰할 수 있는 화자명이 있을 때만 화자별 하이라이트", prompt)
+        self.assertIn("speaker label이 없거나 \"Unknown\"처럼 불확실하면 화자를 만들지 말고", prompt)
+        self.assertIn("plain transcript에서는 speaker_highlights를 화자별 발언이 아니라 주요 논의/source highlight", prompt)
+        self.assertIn("speaker_highlights만으로 새로운 사실, 결정, action_item을 만들지 마세요", prompt)
 
     def test_build_extraction_prompt_includes_meeting_type_policy(self) -> None:
         """회의 유형별 정책이 구조 추출 프롬프트에 삽입됩니다."""
@@ -1279,15 +1479,23 @@ class SummarizeTests(unittest.TestCase):
         execution_prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14", meeting_type="execution")
         customer_prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14", meeting_type="customer_meeting")
         brainstorming_prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14", meeting_type="brainstorming")
+        general_prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14", meeting_type="general")
 
         self.assertIn("회의 유형: technical_review", technical_prompt)
-        self.assertIn("제품 설명, 가능성, 아키텍처 논의, 개념 설명", technical_prompt)
+        self.assertIn("제약 조건, 설계 tradeoff, 리스크", technical_prompt)
         self.assertIn("회의 유형: execution", execution_prompt)
-        self.assertIn("action_items, owner, due_date, decisions를 적극적으로", execution_prompt)
+        self.assertIn("진행 상황, 담당자, 일정, 후속 작업을 원문 근거", execution_prompt)
         self.assertIn("회의 유형: customer_meeting", customer_prompt)
-        self.assertIn("고객 관심사, 후속 논의 주제, 요구사항, 리스크", customer_prompt)
+        self.assertIn("고객 요구, 우려사항, 요구사항, 리스크", customer_prompt)
         self.assertIn("회의 유형: brainstorming", brainstorming_prompt)
-        self.assertIn("action_item 추출은 매우 보수적으로", brainstorming_prompt)
+        self.assertIn("아이디어, 선택지, 질문, 우려사항", brainstorming_prompt)
+        self.assertIn("회의 유형: general", general_prompt)
+        self.assertIn("핵심 논의 맥락을 균형 있게", general_prompt)
+
+        for prompt in [technical_prompt, execution_prompt, customer_prompt, brainstorming_prompt, general_prompt]:
+            self.assertIn("회의 유형은 요약의 강조점을 정하기 위한 참고 정보", prompt)
+            self.assertIn("항목 생성 여부는 항상 transcript의 명시적 근거", prompt)
+            self.assertIn("회의 유형만으로 결정, 액션, 참석자, 사실, 약속을 만들거나 제외하지 마세요", prompt)
 
     def test_extraction_policy_selects_by_meeting_type(self) -> None:
         """meeting_type에 따라 중앙 정책 profile을 선택합니다."""
@@ -1306,10 +1514,12 @@ class SummarizeTests(unittest.TestCase):
         prompt_guidance = summarize.build_policy_prompt_guidance("customer_meeting")
 
         self.assertIn("회의 유형: customer_meeting", prompt_guidance)
-        self.assertIn("action_threshold=strict", prompt_guidance)
-        self.assertIn("decision_threshold=strict", prompt_guidance)
-        self.assertIn("followup_sensitivity=moderate", prompt_guidance)
-        self.assertIn("고객 관심사, 후속 논의 주제, 요구사항, 리스크", prompt_guidance)
+        self.assertIn("회의 유형은 요약의 강조점을 정하기 위한 참고 정보", prompt_guidance)
+        self.assertIn("transcript의 명시적 근거를 우선", prompt_guidance)
+        self.assertIn("회의 유형만으로 결정, 액션, 참석자, 사실, 약속을 만들거나 제외하지 마세요", prompt_guidance)
+        self.assertIn("transcript에 명확한 요청, 담당, 기한, 실행 약속", prompt_guidance)
+        self.assertIn("고객 요구, 우려사항, 요구사항, 리스크", prompt_guidance)
+        self.assertIn("약한 관심 표현이나 탐색적 논의", prompt_guidance)
 
     def test_apply_extraction_policy_downgrades_weak_action_items(self) -> None:
         """약한 action 후보는 삭제하지 않고 논의 메모로 낮춥니다."""
@@ -1333,7 +1543,8 @@ class SummarizeTests(unittest.TestCase):
 
         self.assertEqual(result.downgraded_action_count, 1)
         self.assertEqual(result.structure["action_items"], [])
-        self.assertIn("논의 메모: 도입 가능성을 검토해볼 수 있습니다.", result.structure["summary_facts"])
+        self.assertIn("논의 메모: 도입 가능성 검토", result.structure["summary_facts"])
+        self.assertNotIn("논의 메모: 도입 가능성을 검토해볼 수 있습니다.", result.structure["summary_facts"])
         self.assertTrue(any("실행 약속이 불명확" in warning for warning in result.structure["warnings"]))
 
     def test_apply_extraction_policy_preserves_execution_actions_aggressively(self) -> None:
@@ -1381,7 +1592,7 @@ class SummarizeTests(unittest.TestCase):
         result = summarize.apply_extraction_policy(structure, "technical_review")
 
         self.assertEqual(result.structure["action_items"], [])
-        self.assertIn("논의 메모: 아키텍처 구조를 설명했습니다.", result.structure["summary_facts"])
+        self.assertIn("논의 메모: 아키텍처 구조 검토", result.structure["summary_facts"])
 
     def test_customer_meeting_suppresses_weak_followup_actions(self) -> None:
         """고객 미팅의 약한 후속 논의 표현은 action_item에서 낮춥니다."""
@@ -1405,6 +1616,29 @@ class SummarizeTests(unittest.TestCase):
 
         self.assertEqual(result.downgraded_action_count, 1)
         self.assertEqual(result.structure["action_items"], [])
+        self.assertIn("논의 메모: 요구사항 후속 논의", result.structure["summary_facts"])
+
+    def test_downgraded_action_note_falls_back_to_source_quote_without_task(self) -> None:
+        """task가 비어 있으면 낮춘 action 후보는 source_quote를 fallback으로 사용합니다."""
+        structure = {
+            "summary_facts": [],
+            "decisions": [],
+            "action_items": [
+                {
+                    "task": "",
+                    "owner": "미정",
+                    "due_date": "미정",
+                    "confidence": "low",
+                    "source_quote": "요구사항은 다음에 논의했습니다.",
+                }
+            ],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+
+        result = summarize.apply_extraction_policy(structure, "customer_meeting")
+
+        self.assertEqual(result.downgraded_action_count, 1)
         self.assertIn("논의 메모: 요구사항은 다음에 논의했습니다.", result.structure["summary_facts"])
 
     def test_strict_policy_downgrades_weak_decisions(self) -> None:
@@ -1427,8 +1661,30 @@ class SummarizeTests(unittest.TestCase):
 
         self.assertEqual(result.downgraded_decision_count, 1)
         self.assertEqual(result.structure["decisions"], [])
-        self.assertIn("논의 메모: 신규 구조 적용 가능성이 언급되었습니다.", result.structure["summary_facts"])
+        self.assertIn("논의 메모: 신규 구조 적용 가능성이 언급되었다", result.structure["summary_facts"])
+        self.assertNotIn("논의 메모: 신규 구조 적용 가능성이 언급되었습니다.", result.structure["summary_facts"])
         self.assertTrue(any("확정 근거가 약" in warning for warning in result.structure["warnings"]))
+
+    def test_downgraded_decision_note_falls_back_to_source_quote_without_decision(self) -> None:
+        """decision이 비어 있으면 낮춘 결정 후보는 source_quote를 fallback으로 사용합니다."""
+        structure = {
+            "summary_facts": [],
+            "decisions": [
+                {
+                    "decision": "",
+                    "status": "미확정",
+                    "source_quote": "신규 구조 적용 가능성이 언급되었습니다.",
+                }
+            ],
+            "action_items": [],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+
+        result = summarize.apply_extraction_policy(structure, "brainstorming")
+
+        self.assertEqual(result.downgraded_decision_count, 1)
+        self.assertIn("논의 메모: 신규 구조 적용 가능성이 언급되었습니다.", result.structure["summary_facts"])
 
     def test_apply_extraction_policy_preserves_schema_shape(self) -> None:
         """정책 후처리 이후에도 기존 구조화 schema key를 유지합니다."""
@@ -1447,10 +1703,91 @@ class SummarizeTests(unittest.TestCase):
         extraction_prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14", context)
         minutes_prompt = summarize.build_minutes_prompt("회의 내용", empty_track_b_structure(), context)
 
-        self.assertTrue(extraction_prompt.startswith("아래는 이 회의와 관련된 팀 컨텍스트입니다."))
-        self.assertTrue(minutes_prompt.startswith("아래는 이 회의와 관련된 팀 컨텍스트입니다."))
+        self.assertTrue(extraction_prompt.startswith("아래는 이 회의 이해를 돕기 위한 배경 메모입니다."))
+        self.assertTrue(minutes_prompt.startswith("아래는 이 회의 이해를 돕기 위한 배경 메모입니다."))
+        self.assertIn("원문에 없는 결정이나 액션을 새로 만들지는 마세요", extraction_prompt)
+        self.assertIn("원문에 없는 결정이나 액션을 새로 만들지는 마세요", minutes_prompt)
         self.assertIn(context, extraction_prompt)
         self.assertIn(context, minutes_prompt)
+
+    def test_glossary_prompt_prefix_is_hint_only(self) -> None:
+        """용어집 프롬프트는 근거 없는 사실 생성을 금지하는 참고 힌트입니다."""
+        prompt = summarize.build_glossary_prompt_prefix(["Tableau", "BigQuery"])
+
+        self.assertIn("표기와 용어 해석을 돕기 위한 참고 자료", prompt)
+        self.assertIn("결정, 액션, 참석자, 사실, 약속으로 추가하지 마세요", prompt)
+        self.assertIn("원문 근거가 있는 표현", prompt)
+        self.assertIn("- Tableau", prompt)
+        self.assertIn("- BigQuery", prompt)
+        self.assertEqual(summarize.build_glossary_prompt_prefix([]), "")
+        self.assertEqual(summarize.build_glossary_prompt_prefix(None), "")
+
+    def test_glossary_is_inserted_into_extraction_prompt_after_policy(self) -> None:
+        """구조 추출 프롬프트는 회의 유형 정책 뒤 원칙 앞에 용어집을 넣습니다."""
+        prompt = summarize.build_extraction_prompt(
+            "회의 내용",
+            "2026-05-14",
+            meeting_type="technical_review",
+            glossary_terms=["Tableau", "BigQuery"],
+        )
+
+        self.assertIn("- Tableau", prompt)
+        self.assertIn("- BigQuery", prompt)
+        self.assertLess(prompt.index("회의 유형: technical_review"), prompt.index("아래 용어집"))
+        self.assertLess(prompt.index("아래 용어집"), prompt.index("원칙:"))
+
+    def test_glossary_is_inserted_into_minutes_prompt_after_context(self) -> None:
+        """회의록 생성 프롬프트는 컨텍스트 뒤 검증 JSON 지침 앞에 용어집을 넣습니다."""
+        prompt = summarize.build_minutes_prompt(
+            "회의 내용",
+            empty_track_b_structure(),
+            context="홍길동 - 데이터팀장",
+            glossary_terms=["Tableau"],
+        )
+
+        self.assertIn("- Tableau", prompt)
+        self.assertLess(prompt.index("아래는 이 회의 이해를 돕기 위한 배경 메모입니다."), prompt.index("아래 용어집"))
+        self.assertLess(prompt.index("아래 용어집"), prompt.index("아래 JSON은 이미 검증된 사실입니다."))
+
+    def test_empty_glossary_adds_no_prompt_block(self) -> None:
+        """빈 용어집은 구조 추출과 회의록 생성 프롬프트에 블록을 추가하지 않습니다."""
+        extraction_prompt = summarize.build_extraction_prompt("회의 내용", "2026-05-14", glossary_terms=[])
+        minutes_prompt = summarize.build_minutes_prompt("회의 내용", empty_track_b_structure(), glossary_terms=[])
+
+        self.assertNotIn("아래 용어집", extraction_prompt)
+        self.assertNotIn("아래 용어집", minutes_prompt)
+
+    def test_summary_glossary_normalizes_dedupes_and_truncates(self) -> None:
+        """요약 용어집은 대소문자 무시 중복 제거와 결정적 truncation을 수행합니다."""
+        terms = [
+            "  BigQuery  ",
+            "bigquery",
+            "Graph   RAG",
+            "",
+            "x" * (summarize.MAX_GLOSSARY_TERM_LENGTH + 1),
+            "Tableau",
+        ]
+
+        self.assertEqual(summarize.normalize_glossary_terms(terms), ["BigQuery", "Graph RAG", "Tableau"])
+        self.assertEqual(summarize.truncate_glossary_terms(terms, max_chars=22, max_terms=10), ["BigQuery"])
+        self.assertEqual(summarize.truncate_glossary_terms(terms, max_chars=1200, max_terms=2), ["BigQuery", "Graph RAG"])
+
+    def test_load_summary_glossary_supports_yaml_terms_and_missing_file(self) -> None:
+        """요약 용어집 로더는 terms YAML과 missing file fallback을 지원합니다."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            glossary_path = Path(temp_dir) / "summary_glossary.yaml"
+            glossary_path.write_text(
+                """
+terms:
+  - BigQuery
+  - bigquery
+  - Graph RAG
+""".strip(),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(summarize.load_summary_glossary(glossary_path), ["BigQuery", "Graph RAG"])
+            self.assertEqual(summarize.load_summary_glossary(Path(temp_dir) / "missing.yaml"), [])
 
     def test_request_structured_structure_uses_json_schema_format(self) -> None:
         """OpenAI 요청이 Structured Output JSON schema 옵션을 사용합니다."""
@@ -1486,6 +1823,55 @@ class SummarizeTests(unittest.TestCase):
         self.assertIn("source_quote", action_item_schema["properties"])
         self.assertIn("source_utterance_ids", action_item_schema["properties"])
         self.assertNotIn("default", action_item_schema["properties"]["source_utterance_ids"])
+
+    def test_request_claude_structured_structure_parses_json_response(self) -> None:
+        """Claude 구조 추출은 JSON 텍스트를 기존 structure shape로 정규화합니다."""
+        response_json = {
+            "summary_facts": ["핵심 논의"],
+            "decisions": [],
+            "action_items": [],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+        fake_response = types.SimpleNamespace(
+            content=[types.SimpleNamespace(text=json.dumps(response_json, ensure_ascii=False))]
+        )
+        fake_client = types.SimpleNamespace(messages=types.SimpleNamespace(create=Mock(return_value=fake_response)))
+        claude_globals = summarize.request_claude_structured_structure.__globals__
+
+        with patch.dict(claude_globals, {"create_anthropic_client": Mock(return_value=fake_client)}):
+            result = summarize.request_claude_structured_structure("구조 추출 prompt")
+
+        self.assertEqual(result, response_json)
+        call_kwargs = fake_client.messages.create.call_args.kwargs
+        self.assertEqual(call_kwargs["model"], summarize.DEFAULT_CLAUDE_STRUCTURE_MODEL)
+        self.assertIn("구조 추출 prompt", call_kwargs["messages"][0]["content"])
+        self.assertIn("<OUTPUT_SCHEMA>", call_kwargs["messages"][0]["content"])
+        self.assertIn("JSON object 하나만 반환", call_kwargs["messages"][0]["content"])
+
+    def test_build_claude_json_prompt_uses_compact_schema(self) -> None:
+        """Claude 구조 추출 prompt는 같은 schema를 compact JSON으로 포함합니다."""
+        from summarization.llm_provider import build_claude_json_prompt
+
+        prompt = build_claude_json_prompt("구조 추출 prompt")
+        schema_text = prompt.split("<OUTPUT_SCHEMA>", 1)[1].split("</OUTPUT_SCHEMA>", 1)[0].strip()
+        parsed_schema = json.loads(schema_text)
+
+        self.assertEqual(parsed_schema, summarize.MEETING_STRUCTURE_SCHEMA)
+        for key in ("summary_facts", "decisions", "action_items", "speaker_highlights", "warnings"):
+            self.assertIn(key, schema_text)
+        self.assertNotIn('\n  "properties"', schema_text)
+        self.assertNotIn('\n    "summary_facts"', schema_text)
+
+    def test_request_claude_structured_structure_rejects_malformed_json(self) -> None:
+        """Claude 구조 추출 응답이 JSON object가 아니면 명확히 실패합니다."""
+        fake_response = types.SimpleNamespace(content=[types.SimpleNamespace(text="설명: JSON이 아닙니다")])
+        fake_client = types.SimpleNamespace(messages=types.SimpleNamespace(create=Mock(return_value=fake_response)))
+        claude_globals = summarize.request_claude_structured_structure.__globals__
+
+        with patch.dict(claude_globals, {"create_anthropic_client": Mock(return_value=fake_client)}):
+            with self.assertRaisesRegex(RuntimeError, "Claude structure extraction request failed"):
+                summarize.request_claude_structured_structure("구조 추출 prompt")
 
     def test_meeting_structure_schema_matches_strict_json_schema_subset(self) -> None:
         """OpenAI strict Structured Output에 넘길 schema의 object 필수 조건을 확인합니다."""
@@ -1777,13 +2163,6 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
                     "source_quote": "제가 배포 확인을 2026-05-20까지 하겠습니다.",
                 },
                 {
-                    "task": "자료 정리",
-                    "owner": "Unknown",
-                    "due_date": "2026-05-21",
-                    "confidence": "high",
-                    "source_quote": "제가 자료 정리를 2026-05-21까지 하겠습니다.",
-                },
-                {
                     "task": "고객 공유",
                     "owner": "영업담당자",
                     "due_date": "2026-05-22",
@@ -1797,16 +2176,94 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         transcript = "\n".join(
             [
                 "[u_0001] Speaker 2: 제가 배포 확인을 2026-05-20까지 하겠습니다.",
-                "[u_0002] Unknown: 제가 자료 정리를 2026-05-21까지 하겠습니다.",
-                "[u_0003] 영업담당자: 제가 고객 공유를 2026-05-22까지 하겠습니다.",
+                "[u_0002] 영업담당자: 제가 고객 공유를 2026-05-22까지 하겠습니다.",
             ]
         )
 
         result = summarize.validate_structure(structure, transcript)
 
-        self.assertEqual([item["owner"] for item in result["action_items"]], ["Speaker 2", "Unknown", "영업담당자"])
+        self.assertEqual([item["owner"] for item in result["action_items"]], ["Speaker 2", "영업담당자"])
         self.assertFalse(any("담당자 확인 필요" in warning for warning in result["warnings"]))
         self.assertFalse(any("담당자 확인이 필요한 액션 아이템" in warning for warning in result["warnings"]))
+
+    def test_validate_structure_treats_unknown_speaker_owners_as_unresolved(self) -> None:
+        """Unknown 계열 owner는 plain transcript에서 실제 담당자로 보지 않습니다."""
+        transcript = "\n".join(
+            [
+                "제가 자료 정리를 2026-05-21까지 하겠습니다.",
+                "제가 로그 확인을 2026-05-22까지 하겠습니다.",
+                "제가 고객 공유를 2026-05-23까지 하겠습니다.",
+                "Speaker 1: 제가 배포 확인을 2026-05-24까지 하겠습니다.",
+            ]
+        )
+        structure = {
+            "summary_facts": [],
+            "decisions": [],
+            "action_items": [
+                {
+                    "task": "자료 정리",
+                    "owner": "Unknown",
+                    "due_date": "2026-05-21",
+                    "confidence": "high",
+                    "source_quote": "제가 자료 정리를 2026-05-21까지 하겠습니다.",
+                },
+                {
+                    "task": "로그 확인",
+                    "owner": "Speaker Unknown",
+                    "due_date": "2026-05-22",
+                    "confidence": "high",
+                    "source_quote": "제가 로그 확인을 2026-05-22까지 하겠습니다.",
+                },
+                {
+                    "task": "고객 공유",
+                    "owner": "화자 미상",
+                    "due_date": "2026-05-23",
+                    "confidence": "high",
+                    "source_quote": "제가 고객 공유를 2026-05-23까지 하겠습니다.",
+                },
+                {
+                    "task": "배포 확인",
+                    "owner": "Speaker 1",
+                    "due_date": "2026-05-24",
+                    "confidence": "high",
+                    "source_quote": "제가 배포 확인을 2026-05-24까지 하겠습니다.",
+                },
+            ],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+
+        result = summarize.validate_structure(structure, transcript)
+
+        self.assertEqual(
+            [item["owner"] for item in result["action_items"]],
+            ["미정", "미정", "미정", "Speaker 1"],
+        )
+        self.assertIn("자료 정리: 담당자 확인 필요", result["warnings"])
+        self.assertIn("로그 확인: 담당자 확인 필요", result["warnings"])
+        self.assertIn("고객 공유: 담당자 확인 필요", result["warnings"])
+        self.assertFalse(any("배포 확인: 담당자 확인 필요" == warning for warning in result["warnings"]))
+
+    def test_normalize_action_owner_treats_unknown_markers_as_unresolved(self) -> None:
+        """Unknown과 한국어 미상 표기는 모두 미정 owner로 정규화합니다."""
+        unresolved_owners = [
+            "Unknown",
+            "unknown",
+            "UNKNOWN",
+            "Speaker Unknown",
+            "speaker unknown",
+            "Unknown Speaker",
+            "unknown speaker",
+            "화자 미상",
+            "알 수 없음",
+            "미상",
+        ]
+
+        for owner in unresolved_owners:
+            with self.subTest(owner=owner):
+                self.assertEqual(summarize.normalize_action_owner(owner), "미정")
+
+        self.assertEqual(summarize.normalize_action_owner("Speaker 1"), "Speaker 1")
 
     def test_validate_structure_warns_only_when_owner_is_unknown_marker(self) -> None:
         """owner가 미정이면 기존 담당자 확인 warning은 유지합니다."""
@@ -2105,8 +2562,8 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
             )
         )
 
-    def test_render_output_formats_raw_internal_warnings(self) -> None:
-        """Markdown 확인 필요 섹션도 내부 필드명을 노출하지 않습니다."""
+    def test_render_output_omits_warning_review_section(self) -> None:
+        """Markdown 회의록에는 warning 검토 섹션을 렌더링하지 않습니다."""
         structure = {
             "summary_facts": ["요약"],
             "decisions": [],
@@ -2122,11 +2579,15 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
 
         output = summarize.render_output(structure, "## 회의 요약\n내용")
 
-        self.assertIn("- 담당자 확인이 필요한 액션 아이템이 있습니다.", output)
-        self.assertIn("- 기한 확인이 필요한 액션 아이템이 있습니다.", output)
-        self.assertIn("- 내용 확인이 필요한 항목이 있습니다.", output)
-        self.assertIn("- 원문 근거 확인이 필요한 항목이 있습니다.", output)
-        self.assertFalse(any(internal_name in output for internal_name in ("owner", "due_date", "confidence", "source_quote")))
+        self.assertNotIn("## ⚠️ 확인 필요", output)
+        self.assertNotIn("## 검토 필요", output)
+        self.assertNotIn("- 담당자 확인이 필요한 액션 아이템이 있습니다.", output)
+        self.assertNotIn("- 기한 확인이 필요한 액션 아이템이 있습니다.", output)
+        self.assertNotIn("- 내용 확인이 필요한 항목이 있습니다.", output)
+        self.assertNotIn("- 원문 근거 확인이 필요한 항목이 있습니다.", output)
+        self.assertIn("## 📋 빠른 요약", output)
+        self.assertIn("## ✅ 액션 아이템", output)
+        self.assertIn("## 📝 전체 회의록", output)
 
     def test_format_display_warnings_standardizes_generic_korean_warnings(self) -> None:
         """구체 항목이 없는 한국어 warning도 간결한 표준 문장으로 정리합니다."""
@@ -2161,6 +2622,55 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("고객사 데모 계정 생성: 기한 확인 필요", warnings)
         self.assertEqual(warnings.count("담당자 확인이 필요한 액션 아이템이 있습니다."), 1)
         self.assertFalse(any("action item" in warning.lower() or "merge" in warning.lower() for warning in warnings))
+
+    def test_format_display_warnings_filters_source_utterance_id_only_subjects(self) -> None:
+        """source utterance ID만 주어인 warning은 공개 warning에 raw ID를 남기지 않습니다."""
+        warnings = summarize.format_display_warnings(
+            [
+                "u_0026: 담당자 확인 필요",
+                "u_0015: 기한 확인 필요",
+                "u_0031: 담당자 및 기한 확인 필요",
+                "u_0042: 원문 근거 확인 필요",
+                "u_0043: 내용 확인 필요",
+                "u_0050: 추가 확인이 필요할 수 있습니다",
+                "U_0007: 담당자 확인 필요",
+                "API 응답 오류 재현: 담당자 확인 필요",
+                "고객사 데이터 전달: 추가 확인이 필요할 수 있습니다",
+            ]
+        )
+
+        self.assertIn("담당자 확인이 필요한 액션 아이템이 있습니다.", warnings)
+        self.assertIn("기한 확인이 필요한 액션 아이템이 있습니다.", warnings)
+        self.assertIn("담당자 및 기한 확인이 필요한 액션 아이템이 있습니다.", warnings)
+        self.assertIn("원문 근거 확인이 필요한 항목이 있습니다.", warnings)
+        self.assertIn("내용 확인이 필요한 항목이 있습니다.", warnings)
+        self.assertIn("API 응답 오류 재현: 담당자 확인 필요", warnings)
+        self.assertIn("고객사 데이터 전달: 추가 확인이 필요할 수 있습니다", warnings)
+        self.assertEqual(warnings.count("담당자 확인이 필요한 액션 아이템이 있습니다."), 1)
+        self.assertFalse(any("u_" in warning.lower() for warning in warnings))
+        self.assertFalse(any("추가 확인이 필요할 수 있습니다" == warning for warning in warnings))
+
+    def test_format_display_warnings_drops_internal_owner_inference_leakage(self) -> None:
+        """source ID와 Unknown speaker 기반 내부 추론 설명은 공개 warning에서 숨깁니다."""
+        warnings = summarize.format_display_warnings(
+            [
+                "u_0017에서 1인칭으로 수락했으나 speaker label이 없어 담당자를 특정할 수 없음",
+                "speaker label이 Unknown이어서 담당자를 특정할 수 없음",
+                "u_0080 발화자가 Unknown이라 owner 추론 실패",
+                "Unknown speaker라 1인칭으로 수락했으나 담당자 추론 실패",
+                "KT 데모 일정 조율 결과에 따라 대응 방안 검토 필요",
+                "QA 일정 지연 리스크가 있어 일정 확인 필요",
+                "배포 확인: 원문 근거 확인 필요",
+            ]
+        )
+
+        self.assertIn("KT 데모 일정 조율 결과에 따라 대응 방안 검토 필요", warnings)
+        self.assertIn("QA 일정 지연 리스크가 있어 일정 확인 필요", warnings)
+        self.assertIn("배포 확인: 원문 근거 확인 필요", warnings)
+        self.assertFalse(any("u_" in warning.lower() for warning in warnings))
+        self.assertFalse(any("unknown" in warning.lower() for warning in warnings))
+        self.assertFalse(any("speaker label" in warning.lower() for warning in warnings))
+        self.assertFalse(any("1인칭으로 수락" in warning for warning in warnings))
 
     def test_format_display_warnings_polishes_overly_generic_subjects(self) -> None:
         """너무 넓은 주어는 구체 task가 아니라 일반 warning으로 접습니다."""
@@ -2418,8 +2928,8 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("회의록 작성 시 반드시 이 JSON을 기준", prompt)
         self.assertIn("원문은 표현과 문맥을 자연스럽게 다듬기 위한 참고용", prompt)
         self.assertIn("summary_facts는 회의 요약", prompt)
-        self.assertIn("decisions는 주요 결정사항", prompt)
-        self.assertIn("speaker_highlights는 주요 발언 요약", prompt)
+        self.assertIn("decisions는 status에 따라 확정 결정과 미확정 논의로 구분", prompt)
+        self.assertIn("speaker_highlights는 주요 발언/논의 포인트", prompt)
         self.assertIn("액션 아이템 담당자는 검증 JSON의 owner를 따르고", prompt)
         self.assertIn("1인칭 표현(저, 제가) 자체를 담당자명으로 쓰지 마세요", prompt)
         self.assertIn("회의록 작성 초점", prompt)
@@ -2427,7 +2937,58 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("회의 요약", prompt)
         self.assertIn("주요 결정사항", prompt)
         self.assertIn("액션 아이템", prompt)
-        self.assertIn("주요 발언 요약", prompt)
+        self.assertIn("주요 발언/논의 포인트", prompt)
+
+    def test_generate_minutes_can_use_claude_provider(self) -> None:
+        """SUMMARIZATION_PROVIDER=claude이면 회의록 생성은 Claude 요청 함수로 분기합니다."""
+        structure = empty_track_b_structure()
+        claude_request_mock = Mock(return_value="Claude 회의록")
+        openai_client_mock = Mock()
+
+        with patch.object(summarize, "get_summarization_provider", Mock(return_value="claude")), patch.object(
+            summarize, "request_claude_minutes_generation", claude_request_mock
+        ), patch.object(summarize, "create_openai_client", openai_client_mock):
+            result = summarize.generate_minutes("회의 내용", structure)
+
+        self.assertEqual(result, "Claude 회의록")
+        openai_client_mock.assert_not_called()
+        claude_request_mock.assert_called_once()
+        self.assertIn("아래 JSON은 이미 검증된 사실입니다.", claude_request_mock.call_args.args[0])
+
+    def test_request_claude_minutes_generation_returns_text(self) -> None:
+        """Claude 회의록 생성은 message content의 텍스트를 반환합니다."""
+        fake_response = types.SimpleNamespace(content=[types.SimpleNamespace(text="자연스러운 Claude 회의록")])
+        fake_client = types.SimpleNamespace(messages=types.SimpleNamespace(create=Mock(return_value=fake_response)))
+        claude_globals = summarize.request_claude_minutes_generation.__globals__
+
+        with patch.dict(claude_globals, {"create_anthropic_client": Mock(return_value=fake_client)}):
+            result = summarize.request_claude_minutes_generation("회의록 prompt")
+
+        self.assertEqual(result, "자연스러운 Claude 회의록")
+        call_kwargs = fake_client.messages.create.call_args.kwargs
+        self.assertEqual(call_kwargs["model"], summarize.DEFAULT_CLAUDE_SUMMARY_MODEL)
+        self.assertEqual(call_kwargs["messages"], [{"role": "user", "content": "회의록 prompt"}])
+
+    def test_build_minutes_prompt_separates_confirmed_and_tentative_decisions(self) -> None:
+        """회의록 생성 프롬프트는 확정 결정과 미확정 논의를 구분하도록 지시합니다."""
+        structure = empty_track_b_structure()
+        structure["decisions"] = [
+            {"decision": "배포 일정을 확정한다", "status": "확정"},
+            {"decision": "온톨로지 구축 방향을 검토한다", "status": "미확정"},
+        ]
+
+        prompt = summarize.build_minutes_prompt("회의 내용", structure)
+
+        self.assertIn('status가 "확정"인 항목만 확정된 주요 결정사항', prompt)
+        self.assertIn('status가 "미확정"인 항목은 확정 결정처럼 쓰지 말고', prompt)
+        self.assertIn('"논의된 방향"', prompt)
+        self.assertIn('"검토 중인 사항"', prompt)
+        self.assertIn('"추가 확인이 필요한 방향성"', prompt)
+        self.assertIn('"결정했다"보다 "논의됐다"', prompt)
+        self.assertIn('"검토가 필요하다"', prompt)
+        self.assertIn('"방향으로 언급됐다"', prompt)
+        self.assertIn('확정 결정이 없으면 "주요 결정사항"을 억지로 만들지 말고', prompt)
+        self.assertIn('검토/논의된 방향 (status가 "미확정"인 항목이 있을 때)', prompt)
 
     def test_build_minutes_prompt_uses_meeting_type_focus(self) -> None:
         """회의록 생성 프롬프트는 meeting_type별 작성 초점을 포함합니다."""
@@ -2441,8 +3002,8 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("아이디어, 대안, 탐색적 논의", brainstorming_prompt)
         self.assertIn("진행 상황, blocker, 일정", execution_prompt)
 
-    def test_render_output_combines_warnings_quick_summary_actions_and_full_minutes(self) -> None:
-        """render_output은 Track B JSON과 자연어 회의록을 요청 순서대로 조합합니다."""
+    def test_render_output_combines_quick_summary_actions_and_full_minutes_without_warnings(self) -> None:
+        """render_output은 warning 섹션 없이 Track B JSON과 자연어 회의록을 조합합니다."""
         structure = {
             "summary_facts": [
                 "내부 배포 방향을 논의했습니다.",
@@ -2474,17 +3035,141 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
 
         output = summarize.render_output(structure, minutes)
 
-        self.assertLess(output.index("## ⚠️ 확인 필요"), output.index("## 📋 빠른 요약"))
         self.assertLess(output.index("## 📋 빠른 요약"), output.index("## ✅ 액션 아이템"))
         self.assertLess(output.index("## ✅ 액션 아이템"), output.index("## 📝 전체 회의록"))
-        self.assertIn("- 배포 확인 기한 필요", output)
+        self.assertNotIn("## ⚠️ 확인 필요", output)
+        self.assertNotIn("## 검토 필요", output)
+        self.assertNotIn("- 배포 확인 기한 필요", output)
         self.assertIn("- 내부 배포 방향을 논의했습니다.", output)
         self.assertIn("- 테스트 모드와 저장 흐름을 검토했습니다.", output)
         self.assertIn("- API 키 설정 확인이 필요합니다.", output)
         self.assertNotIn("이 줄은 빠른 요약에서 제외됩니다.", output)
-        self.assertIn("- ⚠️ 담당자: 미정 / 기한: 미정 / 할 일: 배포 확인", output)
-        self.assertIn("- 담당자: 이서연 / 기한: 2026-05-20 / 할 일: 샘플 검수", output)
+        self.assertIn("- 배포 확인", output)
+        self.assertIn("- 샘플 검수 (담당자: 이서연 / 기한: 2026-05-20)", output)
+        self.assertNotIn("담당자: 미정", output)
+        self.assertNotIn("담당자: 확인 필요", output)
+        self.assertNotIn("기한: 미정", output)
+        self.assertNotIn("할 일:", output)
+        self.assertNotIn("- ⚠️", output)
         self.assertNotIn("## 액션 아이템\n-", output)
+
+    def test_render_output_formats_action_items_task_first_with_optional_metadata(self) -> None:
+        """Markdown 액션 아이템은 업무명을 먼저 표시하고 의미 있는 metadata만 붙입니다."""
+        structure = {
+            "summary_facts": ["요약"],
+            "decisions": [],
+            "action_items": [
+                {"task": "POC 환경 구성", "owner": "미정", "due_date": "검토 필요", "confidence": "low"},
+                {"task": "회의록 공유", "owner": "김민수", "due_date": "확인 필요", "confidence": "low"},
+                {"task": "데이터 정제 작업 완료", "owner": " 확인 필요 ", "due_date": "이번주 안", "confidence": "low"},
+                {"task": "발표자료 준비", "owner": "이서연", "due_date": "6월 10일", "confidence": "high"},
+            ],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+
+        output = summarize.render_output(structure, "## 회의 요약\n내용")
+
+        self.assertIn("- POC 환경 구성", output)
+        self.assertIn("- 회의록 공유 (담당자: 김민수)", output)
+        self.assertIn("- 데이터 정제 작업 완료 (기한: 이번주 안)", output)
+        self.assertIn("- 발표자료 준비 (담당자: 이서연 / 기한: 6월 10일)", output)
+        self.assertNotIn("담당자: 미정", output)
+        self.assertNotIn("담당자: 확인 필요", output)
+        self.assertNotIn("담당자: 검토 필요", output)
+        self.assertNotIn("기한: 미정", output)
+        self.assertNotIn("기한: 확인 필요", output)
+        self.assertNotIn("기한: 검토 필요", output)
+        self.assertNotIn("담당자: 확인 필요 / 기한:", output)
+        self.assertNotIn("할 일:", output)
+        self.assertNotIn("- ⚠️", output)
+
+    def test_render_output_removes_generated_minutes_title_headings(self) -> None:
+        """모델이 생성한 최상단 회의록 제목은 backend wrapper와 중복되지 않게 제거합니다."""
+        structure = empty_track_b_structure()
+
+        for title in ("# 회의록", "## 회의록", "# 전체 회의록", "## 전체 회의록"):
+            with self.subTest(title=title):
+                output = summarize.render_output(structure, f"{title}\n\n## 회의 요약\n내용")
+                full_minutes = output.split("## 📝 전체 회의록\n", 1)[1]
+
+                self.assertTrue(full_minutes.startswith("## 회의 요약\n내용"))
+                self.assertNotIn(title, full_minutes)
+
+    def test_render_output_removes_horizontal_rule_only_lines(self) -> None:
+        """모델이 생성한 Markdown 구분선 전용 줄은 최종 회의록에서 제거합니다."""
+        structure = empty_track_b_structure()
+        minutes = """
+# 회의록
+---
+
+## 회의 요약
+내용
+
+----
+
+## 주요 결정사항
+- 진행합니다.
+***
+___
+""".strip()
+
+        output = summarize.render_output(structure, minutes)
+        full_minutes = output.split("## 📝 전체 회의록\n", 1)[1]
+
+        self.assertNotRegex(full_minutes, r"(?m)^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
+        self.assertIn("## 회의 요약\n내용", full_minutes)
+        self.assertIn("## 주요 결정사항\n- 진행합니다.", full_minutes)
+
+    def test_normalize_generated_minutes_markdown_preserves_regular_content(self) -> None:
+        """회의록 Markdown 정리는 의미 있는 heading, bullet, table-like text를 바꾸지 않습니다."""
+        from summarization.rendering import normalize_generated_minutes_markdown
+
+        minutes = "## 회의 요약\n\n- 첫 번째 내용\n\n| 항목 | 내용 |\n| --- | --- |\n| A | B |"
+
+        self.assertEqual(normalize_generated_minutes_markdown(minutes), minutes)
+
+    def test_normalize_generated_minutes_markdown_removes_strikethrough_artifacts(self) -> None:
+        """Markdown 취소선 self-correction은 제거하고 정상 범위 표기는 보존합니다."""
+        from summarization.rendering import normalize_generated_minutes_markdown
+
+        minutes = """
+## 회의 요약
+- 전환율은 ~~90~~91%로 정리했습니다.
+- 달성률은 ~~83~~84%입니다.
+- 다음 주 ~~월요일~~화요일에 재확인합니다.
+- 정상 범위는 90~91%, 10~15개, 월요일~화요일입니다.
+""".strip()
+
+        cleaned_minutes = normalize_generated_minutes_markdown(minutes)
+
+        self.assertIn("- 전환율은 91%로 정리했습니다.", cleaned_minutes)
+        self.assertIn("- 달성률은 84%입니다.", cleaned_minutes)
+        self.assertIn("- 다음 주 화요일에 재확인합니다.", cleaned_minutes)
+        self.assertIn("- 정상 범위는 90~91%, 10~15개, 월요일~화요일입니다.", cleaned_minutes)
+        self.assertNotIn("~~90~~91%", cleaned_minutes)
+        self.assertNotIn("~~83~~84%", cleaned_minutes)
+        self.assertNotIn("~~월요일~~화요일", cleaned_minutes)
+
+    def test_build_summary_result_keeps_unresolved_owner_value_for_api(self) -> None:
+        """Markdown 표시와 달리 공개 구조화 결과의 owner 값은 호환성을 위해 미정으로 유지합니다."""
+        structure = {
+            "summary_facts": [],
+            "decisions": [],
+            "action_items": [
+                {"task": "배포 확인", "owner": "저", "due_date": "미정", "confidence": "low"},
+                {"task": "샘플 검수", "owner": "Speaker 1", "due_date": "2026-05-20", "confidence": "high"},
+            ],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+
+        result = summarize.build_summary_result(structure, "회의록")
+
+        self.assertEqual(result["action_items"][0]["owner"], "미정")
+        self.assertEqual(result["action_items"][0]["due_date"], "미정")
+        self.assertEqual(result["action_items"][1]["owner"], "Speaker 1")
+        self.assertEqual(result["action_items"][1]["due_date"], "2026-05-20")
 
     def test_render_output_separates_discussion_notes_for_technical_review(self) -> None:
         """기술 리뷰의 downgrade 메모는 요약이 아니라 논의 메모로 표시합니다."""
@@ -2508,8 +3193,8 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertNotIn("논의 메모: 신규 구조 적용 가능성이 언급되었습니다.", output)
         self.assertNotIn("확정 근거가 약해", output)
 
-    def test_render_output_softens_non_execution_warnings(self) -> None:
-        """비운영 회의의 owner/due warning은 렌더링에서 부드럽게 표시합니다."""
+    def test_render_output_omits_non_execution_warnings(self) -> None:
+        """비운영 회의도 warning 검토 섹션을 Markdown에 렌더링하지 않습니다."""
         structure = {
             "summary_facts": ["요구사항을 검토했습니다."],
             "decisions": [],
@@ -2520,8 +3205,10 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
 
         output = summarize.render_output(structure, "## 회의 요약\n고객 논의", meeting_type="customer_meeting")
 
-        self.assertIn("## 검토 메모", output)
-        self.assertIn("요구사항 후속 논의: 추가 확인이 필요할 수 있습니다", output)
+        self.assertIn("## 고객 관심사 및 검토 포인트", output)
+        self.assertNotIn("## 검토 메모", output)
+        self.assertNotIn("## 검토 필요", output)
+        self.assertNotIn("요구사항 후속 논의: 추가 확인이 필요할 수 있습니다", output)
         self.assertNotIn("담당자 및 기한 확인 필요", output)
 
     def test_extract_response_text_supports_common_response_shapes(self) -> None:
@@ -2536,6 +3223,40 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
             "nested text",
         )
 
+    def test_claude_response_text_supports_common_response_shapes(self) -> None:
+        """Claude message 응답 객체와 dict에서 텍스트를 추출합니다."""
+        self.assertEqual(
+            summarize.extract_claude_response_text(types.SimpleNamespace(content=[types.SimpleNamespace(text="object text")])),
+            "object text",
+        )
+        self.assertEqual(
+            summarize.extract_claude_response_text({"content": [{"type": "text", "text": "dict text"}]}),
+            "dict text",
+        )
+
+    def test_get_summarization_provider_defaults_to_openai(self) -> None:
+        """요약 provider 기본값은 기존 OpenAI 경로입니다."""
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(summarize.get_summarization_provider(), "openai")
+
+    def test_get_summarization_provider_accepts_claude(self) -> None:
+        """환경 변수로 Claude 요약 provider를 선택할 수 있습니다."""
+        with patch.dict(os.environ, {"SUMMARIZATION_PROVIDER": "claude"}, clear=True):
+            self.assertEqual(summarize.get_summarization_provider(), "claude")
+
+    def test_get_summarization_provider_rejects_unknown_provider(self) -> None:
+        """지원하지 않는 요약 provider는 명확히 거절합니다."""
+        with patch.dict(os.environ, {"SUMMARIZATION_PROVIDER": "unknown"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "Unsupported SUMMARIZATION_PROVIDER"):
+                summarize.get_summarization_provider()
+
+    def test_create_anthropic_client_requires_api_key(self) -> None:
+        """Claude provider는 ANTHROPIC_API_KEY가 없으면 명확히 실패합니다."""
+        claude_globals = summarize.create_anthropic_client.__globals__
+        with patch.dict(os.environ, {}, clear=True), patch.dict(claude_globals, {"load_dotenv": Mock()}):
+            with self.assertRaisesRegex(RuntimeError, "ANTHROPIC_API_KEY is missing"):
+                summarize.create_anthropic_client()
+
     def test_get_structure_model_uses_env_override(self) -> None:
         """환경 변수로 구조 추출 모델명을 덮어쓸 수 있습니다."""
         with patch.dict(os.environ, {"OPENAI_STRUCTURE_MODEL": "custom-structure"}):
@@ -2545,6 +3266,16 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         """환경 변수로 회의록 생성 모델명을 덮어쓸 수 있습니다."""
         with patch.dict(os.environ, {"OPENAI_SUMMARY_MODEL": "custom-summary"}):
             self.assertEqual(summarize.get_summary_model(), "custom-summary")
+
+    def test_get_claude_structure_model_uses_env_override(self) -> None:
+        """환경 변수로 Claude 구조 추출 모델명을 덮어쓸 수 있습니다."""
+        with patch.dict(os.environ, {"CLAUDE_STRUCTURE_MODEL": "custom-claude-structure"}):
+            self.assertEqual(summarize.get_claude_structure_model(), "custom-claude-structure")
+
+    def test_get_claude_summary_model_uses_env_override(self) -> None:
+        """환경 변수로 Claude 회의록 생성 모델명을 덮어쓸 수 있습니다."""
+        with patch.dict(os.environ, {"CLAUDE_SUMMARY_MODEL": "custom-claude-summary"}):
+            self.assertEqual(summarize.get_claude_summary_model(), "custom-claude-summary")
 
 
 if __name__ == "__main__":

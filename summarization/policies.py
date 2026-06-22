@@ -142,6 +142,7 @@ def build_policy_prompt_guidance(meeting_type: str | None = None) -> str:
         [
             f"회의 유형: {policy.meeting_type}",
             "회의 유형 정책:",
+            *build_softening_principle_guidance(),
             *build_action_threshold_guidance(policy),
             *build_decision_threshold_guidance(policy),
             *build_discussion_emphasis_guidance(policy),
@@ -150,22 +151,29 @@ def build_policy_prompt_guidance(meeting_type: str | None = None) -> str:
     )
 
 
+def build_softening_principle_guidance() -> list[str]:
+    """회의 유형 정책이 transcript 근거보다 앞서지 않도록 하는 공통 원칙입니다."""
+    return [
+        "- 회의 유형은 요약의 강조점을 정하기 위한 참고 정보입니다.",
+        "- 항목 생성 여부는 항상 transcript의 명시적 근거를 우선하세요.",
+        "- 회의 유형만으로 결정, 액션, 참석자, 사실, 약속을 만들거나 제외하지 마세요.",
+    ]
+
+
 def build_action_threshold_guidance(policy: ExtractionPolicy) -> list[str]:
     """action_threshold 값에 맞는 프롬프트 지침을 만듭니다."""
     if policy.action_threshold == "aggressive":
         return [
-            "- 실행 회의입니다.",
-            "- action_threshold=aggressive: action_items, owner, due_date, decisions를 적극적으로 추출하세요.",
-            "- 명시적으로 맡기거나 완료하기로 한 일은 누락하지 마세요.",
+            "- 실행 회의에서는 진행 상황, 담당자, 일정, 후속 작업을 원문 근거가 명확할 때 잘 드러나게 추출하세요.",
+            "- 운영상 중요해 보여도 명시적 요청, 담당, 기한, 실행 약속 근거가 약하면 action_item으로 단정하지 말고 summary_facts나 warnings에 남기세요.",
         ]
     if policy.action_threshold == "strict":
         return [
-            "- action_threshold=strict: 담당자, 기한, 명시적 실행 약속이 약하면 action_item으로 올리지 마세요.",
-            "- 설명, 소개, 가능성, 논의 흔적은 summary_facts나 speaker_highlights에 남기세요.",
+            "- 담당자, 기한, 명시적 실행 약속 근거가 약한 항목은 action_item보다 summary_facts나 speaker_highlights에 두는 쪽을 선호하세요.",
+            "- transcript에 명확한 요청, 담당, 기한, 실행 약속이 있으면 회의 유형 때문에 제외하지 마세요.",
         ]
     return [
-        "- 일반 회의입니다.",
-        "- action_threshold=moderate: 명확한 실행 약속은 추출하되 애매한 논의는 action_item으로 올리지 마세요.",
+        "- 일반 회의에서는 명확한 실행 약속은 추출하고, 애매한 논의는 맥락 정보로 남기는 쪽을 선호하세요.",
     ]
 
 
@@ -173,42 +181,48 @@ def build_decision_threshold_guidance(policy: ExtractionPolicy) -> list[str]:
     """decision_threshold 값에 맞는 프롬프트 지침을 만듭니다."""
     if policy.decision_threshold == "strict":
         return [
-            "- decision_threshold=strict: 확정, 결정, 합의처럼 강한 확인 표현이 있을 때만 decisions에 넣으세요.",
-            "- 논의되었다, 가능성이 언급되었다, 설명했다, 공감대가 있었다 수준은 결정사항이 아닙니다.",
+            "- decisions에는 확정, 결정, 합의처럼 명확한 근거가 있는 항목을 우선 반영하세요.",
+            "- 논의, 가능성 언급, 설명, 공감대 수준의 내용은 미확정 상태로 구분하거나 summary_facts에 남기세요.",
         ]
     return [
-        "- decision_threshold=moderate: 명확한 결정과 미확정 논의를 구분하되, 단순 설명은 결정으로 만들지 마세요.",
+        "- 명확한 결정과 미확정 논의를 구분하고, 단순 설명은 summary_facts에 두는 쪽을 선호하세요.",
     ]
 
 
 def build_discussion_emphasis_guidance(policy: ExtractionPolicy) -> list[str]:
     """discussion_emphasis 값에 맞는 프롬프트 지침을 만듭니다."""
     if policy.discussion_emphasis == "customer":
-        return ["- 고객 관심사, 후속 논의 주제, 요구사항, 리스크를 더 중요하게 보세요."]
+        return [
+            "- 고객 요구, 우려사항, 요구사항, 리스크, 후속 논의 주제가 원문에 있으면 요약에서 잘 보이게 반영하세요.",
+            "- 약한 관심 표현이나 탐색적 논의를 확정된 action_item으로 바꾸지 마세요.",
+        ]
     if policy.discussion_emphasis == "technical":
         return [
-            "- 기술 리뷰입니다.",
-            "- 제품 설명, 가능성, 아키텍처 논의, 개념 설명을 명시적 합의 없이 action_item이나 decision으로 올리지 마세요.",
-            "- 핵심 개념, 기술 논의, Q&A, 아키텍처 쟁점은 summary_facts와 speaker_highlights에 충실히 반영하세요.",
+            "- 기술 리뷰에서는 제약 조건, 설계 tradeoff, 리스크, 미해결 질문, 검토 결과를 원문 근거에 맞게 강조하세요.",
+            "- 설명, 가능성, 아키텍처 논의는 명확한 합의나 후속 약속이 없으면 논의 맥락으로 다루세요.",
+            "- transcript가 뒷받침하는 명확한 follow-up이나 decision은 회의 유형 때문에 제외하지 마세요.",
         ]
     if policy.discussion_emphasis == "ideas":
         return [
-            "- 브레인스토밍입니다.",
-            "- action_item 추출은 매우 보수적으로 수행하세요.",
-            "- 아이디어, 논의 주제, 선택지, 우려사항을 summary_facts와 speaker_highlights에 우선 반영하세요.",
+            "- 브레인스토밍에서는 아이디어, 선택지, 질문, 우려사항, 탐색적 논의를 원문 근거에 맞게 강조하세요.",
+            "- 아이디어 논의에서 action_item을 억지로 만들지 마세요.",
+            "- 명확한 다음 단계 약속, 담당, 요청, 기한이 있으면 action_item으로 추출하세요.",
+            "- 명확한 약속은 회의 유형 때문에 제외하지 마세요.",
         ]
     if policy.discussion_emphasis == "operational":
-        return ["- 업무 진행 상황, 일정, 담당자, 후속 작업을 중심으로 정리하세요."]
+        return ["- 업무 진행 상황, 일정, 담당자, 후속 작업이 원문에 명확하면 요약에서 잘 보이게 정리하세요."]
     return ["- 회의 요약에 필요한 핵심 논의 맥락을 균형 있게 반영하세요."]
 
 
 def build_followup_sensitivity_guidance(policy: ExtractionPolicy) -> list[str]:
     """followup_sensitivity 값에 맞는 프롬프트 지침을 만듭니다."""
     if policy.followup_sensitivity == "strict":
-        return ["- followup_sensitivity=strict: 명시적 follow-up 약속만 action_item으로 추출하세요."]
+        return ["- follow-up은 명시적 요청, 담당, 기한, 다음 단계 약속이 확인될 때 action_item으로 추출하세요."]
     if policy.followup_sensitivity == "aggressive":
-        return ["- followup_sensitivity=aggressive: 운영상 필요한 후속 작업 후보를 적극적으로 검토하세요."]
-    return ["- followup_sensitivity=moderate: 명시적 후속 논의는 남기되 약한 관심 표현은 action_item으로 만들지 마세요."]
+        return [
+            "- 후속 작업 후보는 원문 근거를 확인해 검토하고, 근거가 약한 운영 메모는 summary_facts나 warnings에 남기세요."
+        ]
+    return ["- 명시적 후속 논의는 반영하되, 약한 관심 표현이나 가능성 언급은 action_item으로 단정하지 마세요."]
 
 
 def apply_extraction_policy(structure: dict[str, Any], meeting_type: str | None = None) -> PolicyApplicationResult:
@@ -303,20 +317,18 @@ def should_downgrade_decision(item: dict[str, Any], policy: ExtractionPolicy) ->
 
 def build_downgraded_action_note(item: dict[str, Any]) -> str:
     """낮춘 action 후보를 summary_facts에 남길 문장으로 만듭니다."""
-    task = as_text(item.get("task")) or "후속 작업 후보"
+    task = as_text(item.get("task"))
     source_quote = as_text(item.get("source_quote"))
-    if source_quote:
-        return f"논의 메모: {source_quote}"
-    return f"논의 메모: {task}"
+    note = task or source_quote or "후속 작업 후보"
+    return f"논의 메모: {note}"
 
 
 def build_downgraded_decision_note(item: dict[str, Any]) -> str:
     """낮춘 decision 후보를 summary_facts에 남길 문장으로 만듭니다."""
-    decision = as_text(item.get("decision")) or "결정 후보"
+    decision = as_text(item.get("decision"))
     source_quote = as_text(item.get("source_quote"))
-    if source_quote:
-        return f"논의 메모: {source_quote}"
-    return f"논의 메모: {decision}"
+    note = decision or source_quote or "결정 후보"
+    return f"논의 메모: {note}"
 
 
 def build_downgraded_action_warning(item: dict[str, Any]) -> str:

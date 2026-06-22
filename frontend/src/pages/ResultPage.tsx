@@ -36,6 +36,8 @@ const EXPORT_OPTIONS: Array<{ format: ExportFormat; label: string }> = [
   { format: "docx", label: "Word (.docx)" }
 ];
 
+type CopyStatus = "copied" | "failed" | "idle";
+
 /**
  * Returns today's date as a compact Korean display label.
  */
@@ -49,7 +51,72 @@ function getDefaultMeetingDate(): string {
  * Copies text to the clipboard when browser permissions allow it.
  */
 async function copyToClipboard(text: string): Promise<void> {
+  if (!text) {
+    throw new Error("Clipboard copy failed.");
+  }
+
+  if (copyToClipboardWithTextarea(text)) {
+    return;
+  }
+
+  if (!navigator.clipboard?.writeText) {
+    throw new Error("Clipboard copy failed.");
+  }
+
   await navigator.clipboard.writeText(text);
+}
+
+/**
+ * 사용자 클릭 이벤트 안에서 동기 복사를 먼저 시도합니다.
+ */
+function copyToClipboardWithTextarea(text: string): boolean {
+  const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const selection = document.getSelection();
+  const selectedRanges = selection ? Array.from({ length: selection.rangeCount }, (_, index) => selection.getRangeAt(index)) : [];
+  let didCopy = false;
+  const handleCopy = (event: ClipboardEvent) => {
+    event.clipboardData?.setData("text/plain", text);
+    event.preventDefault();
+    didCopy = true;
+  };
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.width = "1px";
+  textarea.style.height = "1px";
+  textarea.style.border = "0";
+  textarea.style.margin = "0";
+  textarea.style.padding = "0";
+  textarea.style.opacity = "0.01";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+
+  try {
+    textarea.focus({ preventScroll: true });
+  } catch {
+    textarea.focus();
+  }
+
+  textarea.select();
+  textarea.setSelectionRange(0, text.length);
+  document.addEventListener("copy", handleCopy);
+
+  try {
+    return document.execCommand("copy") || didCopy;
+  } catch {
+    return false;
+  } finally {
+    document.removeEventListener("copy", handleCopy);
+    document.body.removeChild(textarea);
+    if (selection) {
+      selection.removeAllRanges();
+      selectedRanges.forEach((range) => selection.addRange(range));
+    }
+    activeElement?.focus();
+  }
 }
 
 /**
@@ -67,7 +134,7 @@ export default function ResultPage({
   const displayMinutes = normalizeMarkdownForDisplay(result.minutes);
   const [editedMinutes, setEditedMinutes] = useState(displayMinutes);
   const [isEditing, setIsEditing] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<"copied" | "idle">("idle");
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>("idle");
   const [isExportOpen, setIsExportOpen] = useState(false);
   const finalizedMinutes = normalizeMarkdownForDisplay(editedMinutes);
   const exportFilename = sanitizeExportFilename(title);
@@ -103,7 +170,7 @@ export default function ResultPage({
   }, [displayMinutes, result.job_id, resolvedMeetingType]);
 
   useEffect(() => {
-    if (copyStatus !== "copied") {
+    if (copyStatus === "idle") {
       return undefined;
     }
 
@@ -123,9 +190,13 @@ export default function ResultPage({
    * Copies the full minutes text and allows callers to hook into the action.
    */
   async function handleCopy() {
-    await copyToClipboard(finalizedMinutes);
-    setCopyStatus("copied");
-    onCopy?.(finalizedMinutes);
+    try {
+      await copyToClipboard(finalizedMinutes);
+      setCopyStatus("copied");
+      onCopy?.(finalizedMinutes);
+    } catch {
+      setCopyStatus("failed");
+    }
   }
 
   /**
@@ -199,7 +270,7 @@ export default function ResultPage({
                 onClick={handleCopy}
               >
                 {copyStatus === "copied" ? <Check className="shrink-0" size={15} /> : <Copy className="shrink-0" size={15} />}
-                {copyStatus === "copied" ? "복사됨" : "복사"}
+                {copyStatus === "copied" ? "클립보드에 복사됨" : copyStatus === "failed" ? "복사 실패" : "복사"}
               </button>
               <div className="relative">
                 <button

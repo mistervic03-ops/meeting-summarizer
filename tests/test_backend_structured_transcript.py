@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -143,6 +143,20 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
 
         self.assertEqual(storage.get_job(job.id).meeting_type, "technical_review")
 
+    def test_storage_tracks_chunk_progress(self) -> None:
+        """storage는 사용자용 STT 청크 진행률을 저장합니다."""
+        job = storage.create_job("meeting.wav")
+
+        storage.mark_job_processing(job.id)
+        storage.mark_job_chunk_progress(job.id, completed_chunks=2, total_chunks=5)
+
+        updated_job = storage.get_job(job.id)
+        self.assertEqual(updated_job.completed_chunks, 2)
+        self.assertEqual(updated_job.total_chunks, 5)
+        self.assertEqual(updated_job.progress, 46)
+        self.assertEqual(updated_job.stage, "음성 변환")
+        self.assertIn("2/5 구간 완료", updated_job.message)
+
     def test_backend_pipeline_builds_normalized_transcript_from_structured_payload(self) -> None:
         """backend pipeline helper는 structured payload를 내부 NormalizedTranscript로 바꿉니다."""
         normalized = build_normalized_transcript_from_structured_payload(structured_payload_dict())
@@ -161,10 +175,26 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         ) as transcribe_mock:
             run_transcription_pipeline(job.id, Path("meeting.wav"), meeting_type="execution")
 
-        transcribe_mock.assert_called_once_with(Path("meeting.wav"))
+        transcribe_mock.assert_called_once_with(Path("meeting.wav"), progress_callback=ANY, stt_provider=None)
         self.assertEqual(storage.get_job(job.id).result.transcript, "plain transcript")
         self.assertEqual(storage.get_job(job.id).meeting_type, "execution")
         self.assertIsNone(storage.get_job(job.id).result.structured_transcript)
+
+    def test_transcription_pipeline_passes_requested_stt_provider(self) -> None:
+        """업로드 요청의 STT provider 선택은 전사 호출까지 전달됩니다."""
+        job = storage.create_job("meeting.wav")
+
+        with patch("backend.services.pipeline.transcribe_audio", return_value="cloud transcript") as transcribe_mock:
+            run_transcription_pipeline(
+                job.id,
+                Path("meeting.wav"),
+                transcription_mode="plain",
+                meeting_type="execution",
+                stt_provider="openai",
+            )
+
+        transcribe_mock.assert_called_once_with(Path("meeting.wav"), progress_callback=ANY, stt_provider="openai")
+        self.assertEqual(storage.get_job(job.id).result.transcript, "cloud transcript")
 
     def test_transcription_pipeline_diarized_mode_stores_plain_and_structured_transcript(self) -> None:
         """diarized mode는 plain text와 structured transcript를 함께 저장합니다."""
@@ -203,6 +233,7 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
 
         self.assertEqual(transcribe_mock.call_args_list[0].kwargs, {"mode": "diarized"})
         self.assertEqual(transcribe_mock.call_args_list[1].args, (Path("meeting.wav"),))
+        self.assertEqual(transcribe_mock.call_args_list[1].kwargs, {"progress_callback": ANY, "stt_provider": None})
         result = storage.get_job(job.id).result
         self.assertEqual(result.transcript, "plain fallback")
         self.assertIsNone(result.structured_transcript)

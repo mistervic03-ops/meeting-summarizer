@@ -17,6 +17,9 @@ from summarization.validation import (
 
 
 DISCUSSION_NOTE_PREFIX = "논의 메모:"
+GENERATED_MINUTES_TITLE_PATTERN = re.compile(r"^\s*#{1,2}\s*(?:전체\s+)?회의록\s*$")
+MARKDOWN_HORIZONTAL_RULE_PATTERN = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
+MARKDOWN_STRIKETHROUGH_PATTERN = re.compile(r"~~.*?~~")
 
 
 def render_output(structure: dict[str, Any], minutes_text: str, meeting_type: str = "general") -> str:
@@ -24,14 +27,6 @@ def render_output(structure: dict[str, Any], minutes_text: str, meeting_type: st
     normalized_structure = ensure_structure_shape(structure)
     resolved_meeting_type = normalize_meeting_type(meeting_type)
     summary_facts, discussion_notes = split_discussion_notes(normalized_structure.summary_facts)
-    warnings = format_warnings_for_rendering(
-        format_display_warnings(
-            normalized_structure.warnings,
-            normalized_structure.action_items,
-            normalized_structure.decisions,
-        ),
-        resolved_meeting_type,
-    )
     kept_lines: list[str] = []
     skipping_action_items = False
 
@@ -44,15 +39,11 @@ def render_output(structure: dict[str, Any], minutes_text: str, meeting_type: st
         if not skipping_action_items:
             kept_lines.append(line)
 
-    deduplicated_minutes = "\n".join(kept_lines).strip()
+    deduplicated_minutes = normalize_generated_minutes_markdown("\n".join(kept_lines))
     sections = []
 
     summary_title = get_summary_section_title(resolved_meeting_type)
-    warning_title = get_warning_section_title(resolved_meeting_type)
     action_title = get_action_section_title(resolved_meeting_type)
-
-    if warnings and resolved_meeting_type in {"execution", "general"}:
-        sections.append("\n".join(["## ⚠️ 확인 필요", *(f"- {warning}" for warning in warnings)]))
 
     summary_lines = [f"- {fact}" for fact in clean_text_list(summary_facts)[:3]]
     sections.append(f"{summary_title}\n" + ("\n".join(summary_lines) if summary_lines else "요약 없음"))
@@ -61,25 +52,75 @@ def render_output(structure: dict[str, Any], minutes_text: str, meeting_type: st
     if note_lines:
         sections.append("## 논의 메모\n" + "\n".join(note_lines))
 
-    if warnings and resolved_meeting_type not in {"execution", "general"}:
-        sections.append("\n".join([warning_title, *(f"- {warning}" for warning in warnings)]))
-
     action_item_lines = [action_title]
     if normalized_structure.action_items:
         for item in normalized_structure.action_items:
-            tag = " ⚠️" if item.get("confidence") == "low" or as_text(item.get("due_date")) == "미정" else ""
-            owner = normalize_action_owner(as_text(item.get("owner")))
-            action_item_lines.append(
-                f"-{tag} 담당자: {owner} / "
-                f"기한: {as_text(item.get('due_date')) or '미정'} / "
-                f"할 일: {as_text(item.get('task')) or '내용 미정'}"
-            )
+            action_item_lines.append(format_action_item_for_markdown(item))
     else:
         action_item_lines.append("- 없음")
     sections.append("\n".join(action_item_lines))
 
     sections.append(f"## 📝 전체 회의록\n{deduplicated_minutes.strip() or '회의록 없음'}")
     return "\n\n".join(section for section in sections if section.strip()).strip()
+
+
+def normalize_generated_minutes_markdown(minutes_text: str) -> str:
+    """모델이 생성한 회의록 Markdown의 제목/구분선/수정 artifact를 보수적으로 정리합니다."""
+    lines = as_text(minutes_text).splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and GENERATED_MINUTES_TITLE_PATTERN.match(lines[0]):
+        lines.pop(0)
+        while lines and not lines[0].strip():
+            lines.pop(0)
+
+    cleaned_lines = [line.rstrip() for line in lines if not MARKDOWN_HORIZONTAL_RULE_PATTERN.match(line)]
+    cleaned_text = "\n".join(cleaned_lines).strip()
+    cleaned_text = remove_markdown_strikethrough_artifacts(cleaned_text)
+    return re.sub(r"\n{3,}", "\n\n", cleaned_text)
+
+
+def remove_markdown_strikethrough_artifacts(markdown_text: str) -> str:
+    """정상 범위 표기 물결표는 보존하고 Markdown 취소선 span만 제거합니다."""
+    return MARKDOWN_STRIKETHROUGH_PATTERN.sub("", markdown_text)
+
+
+def format_action_item_for_markdown(item: dict[str, Any]) -> str:
+    """Markdown 액션 아이템을 task-first 형식으로 표시합니다."""
+    task = as_text(item.get("task")) or "내용 미정"
+    metadata = []
+    owner = meaningful_action_owner(as_text(item.get("owner")))
+    due_date = meaningful_action_due_date(as_text(item.get("due_date")))
+
+    if owner:
+        metadata.append(f"담당자: {owner}")
+    if due_date:
+        metadata.append(f"기한: {due_date}")
+    if metadata:
+        return f"- {task} ({' / '.join(metadata)})"
+    return f"- {task}"
+
+
+def meaningful_action_owner(owner: str) -> str:
+    """Markdown에 표시할 의미 있는 담당자만 반환합니다."""
+    normalized_owner = normalize_action_owner(owner)
+    if is_unresolved_action_metadata(normalized_owner):
+        return ""
+    return normalized_owner
+
+
+def meaningful_action_due_date(due_date: str) -> str:
+    """Markdown에 표시할 의미 있는 기한만 반환합니다."""
+    due_date_text = as_text(due_date)
+    if is_unresolved_action_metadata(due_date_text):
+        return ""
+    return due_date_text
+
+
+def is_unresolved_action_metadata(value: str) -> bool:
+    """담당자/기한 metadata가 미해결 표시값인지 확인합니다."""
+    metadata_key = re.sub(r"\s+", "", as_text(value)).lower()
+    return metadata_key in {"", "미정", "확인필요", "검토필요"}
 
 
 def build_summary_result(structure: dict[str, Any], minutes_text: str) -> SummaryResult:
@@ -143,47 +184,6 @@ def split_discussion_notes(summary_facts: list[str]) -> tuple[list[str], list[st
     return facts, notes
 
 
-def format_warnings_for_rendering(warnings: list[str], meeting_type: str) -> list[str]:
-    """회의 유형에 맞게 렌더링용 warning 톤을 조정합니다."""
-    if meeting_type in {"execution", "general"}:
-        return warnings
-
-    softened: list[str] = []
-    seen: set[str] = set()
-    for warning in warnings:
-        if is_policy_downgrade_warning(warning):
-            continue
-        text = soften_operational_warning(warning)
-        key = re.sub(r"\s+", "", text)
-        if text and key not in seen:
-            softened.append(text)
-            seen.add(key)
-    return softened
-
-
-def is_policy_downgrade_warning(warning: str) -> bool:
-    """논의 메모로 이미 노출한 downgrade warning인지 확인합니다."""
-    return "논의 메모로 분류" in warning
-
-
-def soften_operational_warning(warning: str) -> str:
-    """비운영 회의에서 owner/due 중심 warning을 부드럽게 표시합니다."""
-    text = as_text(warning)
-    if "담당자 및 기한 확인 필요" in text:
-        return text.replace("담당자 및 기한 확인 필요", "추가 확인이 필요할 수 있습니다")
-    if "담당자 확인 필요" in text:
-        return text.replace("담당자 확인 필요", "추가 확인이 필요할 수 있습니다")
-    if "기한 확인 필요" in text:
-        return text.replace("기한 확인 필요", "추가 확인이 필요할 수 있습니다")
-    if "담당자 확인이 필요한 액션 아이템이 있습니다." in text:
-        return "일부 후속 항목은 추가 확인이 필요할 수 있습니다."
-    if "기한 확인이 필요한 액션 아이템이 있습니다." in text:
-        return "일부 후속 항목은 일정 확인이 필요할 수 있습니다."
-    if "담당자 및 기한 확인이 필요한 액션 아이템이 있습니다." in text:
-        return "일부 후속 항목은 추가 확인이 필요할 수 있습니다."
-    return text
-
-
 def get_summary_section_title(meeting_type: str) -> str:
     """회의 유형에 맞는 요약 섹션 제목을 반환합니다."""
     if meeting_type == "technical_review":
@@ -193,13 +193,6 @@ def get_summary_section_title(meeting_type: str) -> str:
     if meeting_type == "brainstorming":
         return "## 아이디어 및 논점"
     return "## 📋 빠른 요약"
-
-
-def get_warning_section_title(meeting_type: str) -> str:
-    """회의 유형에 맞는 검토 섹션 제목을 반환합니다."""
-    if meeting_type in {"technical_review", "customer_meeting", "brainstorming"}:
-        return "## 검토 메모"
-    return "## ⚠️ 확인 필요"
 
 
 def get_action_section_title(meeting_type: str) -> str:
