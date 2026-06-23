@@ -26,7 +26,6 @@ PLAIN_HEADING_LABEL_KEYS = {
 SPEAKER_LINE_PATTERN = re.compile(
     r"^\s*(?:\[(?P<bracket_speaker>[^\]]{1,40})\]|(?P<speaker>[^:：\n]{1,40}))\s*[:：]\s*(?P<text>.*)$"
 )
-SENTENCE_SPLIT_PATTERN = re.compile(r"[^.!?。！？]+[.!?。！？]+|[^.!?。！？]+")
 DATE_PATTERNS = (
     re.compile(r"(?P<year>20\d{2})\s*년\s*(?P<month>\d{1,2})\s*월\s*(?P<day>\d{1,2})\s*일"),
     re.compile(r"(?P<year>20\d{2})[-./](?P<month>\d{1,2})[-./](?P<day>\d{1,2})"),
@@ -71,8 +70,7 @@ def normalize_transcript(transcript: str) -> NormalizedTranscript:
                 )
             )
         else:
-            for sentence in split_plain_text_sentences(line):
-                parsed_utterances.append((None, sentence, sentence))
+            parsed_utterances.append((None, line, raw_line))
 
     merged_utterances: list[tuple[str | None, str, str]] = []
 
@@ -114,11 +112,6 @@ def is_plain_heading_label(label: str) -> bool:
     """plain transcript heading/key label로 알려진 값인지 반환합니다."""
     label_key = re.sub(r"\s+", "", label.strip()).casefold()
     return label_key in PLAIN_HEADING_LABEL_KEYS
-
-
-def split_plain_text_sentences(text: str) -> list[str]:
-    """speaker 없는 plain text를 문장 단위로 나눕니다."""
-    return [match.group(0).strip() for match in SENTENCE_SPLIT_PATTERN.finditer(text) if match.group(0).strip()]
 
 
 def structured_transcript_payload_to_normalized_transcript(payload: object) -> NormalizedTranscript:
