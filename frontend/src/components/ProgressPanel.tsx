@@ -18,8 +18,8 @@ const DEFAULT_STEPS = [
   { label: "회의 요약 생성", progress: 88 },
   { label: "결과 정리", progress: 100 }
 ];
-const WARMUP_CHUNK_SECONDS = 75;
-const NORMAL_CHUNK_SECONDS = 35;
+const WARMUP_CHUNK_SECONDS = 60;
+const NORMAL_CHUNK_SECONDS = 25;
 const WARMUP_CHUNK_COUNT = 3;
 
 /**
