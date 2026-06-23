@@ -40,7 +40,6 @@ export default function ProgressPanel({
   const stage = getFriendlyStage(reportedStage, status);
   const message = jobStatus?.message ?? (status === "idle" ? idleMessage : pendingMessage);
   const activeStepIndex = getActiveStepIndex(steps, progress, stage, status);
-  const chunkDetail = getChunkDetail(jobStatus);
   const progressTimingDetail = getProgressTimingDetail(jobStatus, status, reportedStage, nowMs);
 
   useEffect(() => {
@@ -80,7 +79,6 @@ export default function ProgressPanel({
         <div className="min-w-0">
           <h2 className="text-[12px] font-semibold text-slate-950">{stage}</h2>
           <p className="mt-0.5 break-words text-[11px] leading-4 text-slate-500">{message}</p>
-          {chunkDetail ? <p className="mt-1 text-[11px] font-medium leading-4 text-brand-700 dark:text-app-accent">{chunkDetail}</p> : null}
         </div>
       </div>
 
@@ -177,14 +175,6 @@ function getFriendlyStage(stage: string, status: JobStatus): string {
   return stage;
 }
 
-function getChunkDetail(jobStatus: JobStatusResponse | null): string {
-  if (!isChunkProgressActive(jobStatus) || jobStatus?.completed_chunks == null || !jobStatus.total_chunks || jobStatus.total_chunks <= 1) {
-    return "";
-  }
-
-  return `음성 변환 중 · ${jobStatus.completed_chunks}/${jobStatus.total_chunks} 구간 완료`;
-}
-
 function getProgressTimingDetail(
   jobStatus: JobStatusResponse | null,
   status: JobStatus,
@@ -201,7 +191,7 @@ function getProgressTimingDetail(
   }
 
   if (isChunkProgressActive(jobStatus) && jobStatus.completed_chunks != null && jobStatus.total_chunks) {
-    if (jobStatus.completed_chunks < 2) {
+    if (jobStatus.completed_chunks < 4) {
       return "";
     }
     const safeCompleted = Math.max(0, Math.min(jobStatus.completed_chunks, jobStatus.total_chunks));
@@ -209,7 +199,10 @@ function getProgressTimingDetail(
     if (remainingChunks === 0) {
       return "";
     }
-    const averageSecondsPerChunk = elapsedSeconds / safeCompleted;
+    const estimatedWarmupSeconds = elapsedSeconds * 0.55;
+    const postWarmupElapsedSeconds = elapsedSeconds - estimatedWarmupSeconds;
+    const postWarmupChunks = safeCompleted - 3;
+    const averageSecondsPerChunk = postWarmupElapsedSeconds / postWarmupChunks;
     return `약 ${formatRemainingDuration(remainingChunks * averageSecondsPerChunk)} 남았습니다`;
   }
 
