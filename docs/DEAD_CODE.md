@@ -11,7 +11,7 @@ Current Spark production deployment means:
 
 ## Diarized Mode
 
-Status: inactive in current Spark production. Frontend/API and backend pipeline/provider plumbing has been removed; `transcribe.py` still contains legacy diarized internals.
+Status: fully removed from the active frontend/API/backend transcription flow.
 
 Why inactive:
 
@@ -20,6 +20,7 @@ Why inactive:
 - `backend/api/routes.py:create_transcription_job()` no longer accepts a `transcription_mode` form field.
 - `backend/services/pipeline.py:run_transcription_pipeline()` always uses plain STT.
 - STT providers no longer accept a transcription mode parameter.
+- `transcribe.py` no longer exposes diarized mode parameters, diarized request branches, or diarized-only helper functions.
 - Spark production uses `STT_PROVIDER=local_gpu_whisper`.
 
 Removed locations:
@@ -31,20 +32,20 @@ Removed locations:
 - `backend/services/pipeline.py:transcribe_audio_for_review()`: removed diarized branch and plain fallback.
 - `backend/services/pipeline.py:normalized_transcript_to_structured_payload()`: removed diarized structured-payload conversion.
 - `backend/services/stt/providers.py`: removed `TranscriptionMode` and provider-level mode parameters.
-
-Remaining locations:
-
-- `transcribe.py:transcribe_audio_diarized()`: legacy OpenAI diarized workflow.
-- `transcribe.py:diarized_segments_to_utterances()` and `diarized_segments_to_normalized_transcript()`: legacy segment conversion.
-- `transcribe.py:call_diarized_transcription_provider*()`: legacy diarized provider call and retry wrappers.
-- `transcribe.py:extract_diarized_segments()` and `normalize_diarized_segments()`: legacy response parsing.
-- `transcribe.py:get_diarized_transcription_model()`, `get_diarized_chunk_duration_seconds()`, and `get_diarized_chunk_overlap_seconds()`: legacy diarized configuration.
+- `transcribe.py:transcribe_audio()`: removed the public `mode` parameter and now returns only plain `str` transcripts.
+- `transcribe.py:_transcribe_audio_openai()`: removed the internal `mode` parameter and diarized delegation branch.
+- `transcribe.py:transcribe_audio_diarized()`: removed legacy OpenAI diarized workflow.
+- `transcribe.py:diarized_segments_to_utterances()` and `diarized_segments_to_normalized_transcript()`: removed legacy segment conversion.
+- `transcribe.py:call_diarized_transcription_provider*()`: removed legacy diarized provider call and retry wrappers.
+- `transcribe.py:extract_diarized_segments()` and `normalize_diarized_segments()`: removed legacy response parsing.
+- `transcribe.py:get_diarized_transcription_model()`, `get_diarized_chunk_duration_seconds()`, and `get_diarized_chunk_overlap_seconds()`: removed legacy diarized configuration helpers.
+- `transcribe.py:resolve_transcription_model_name()`, `prepare_audio_files()`, `call_openai_transcription()`, `get_audio_chunk_config()`, `validate_chunk_before_transcription()`, `split_chunk_for_input_too_large()`, and `build_retry_chunk_config()`: removed remaining diarized mode parameters, branches, and shared-helper residue.
 
 Notes:
 
 - Requests can no longer select `transcription_mode=diarized` through the public backend API.
 - Internal environment-driven diarized mode has been removed from the backend pipeline.
-- Legacy diarized code remains in `transcribe.py` until the transcription-module cleanup is completed.
+- `transcribe.py` is now plain-only for transcription request construction and chunk retry handling.
 
 ## `/jobs` One-Shot Endpoint
 

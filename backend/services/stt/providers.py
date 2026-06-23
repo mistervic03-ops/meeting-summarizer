@@ -165,7 +165,7 @@ class LocalGpuWhisperProvider:
 
         config = transformers_whisper.get_config()
         workflow_started_at = time.perf_counter()
-        chunk_config = get_audio_chunk_config("plain")
+        chunk_config = get_audio_chunk_config()
         concurrency = get_plain_transcription_concurrency()
         timing_stats = TranscriptionTimingStats(
             mode="plain",
@@ -197,7 +197,7 @@ class LocalGpuWhisperProvider:
 
         try:
             preparation_started_at = time.perf_counter()
-            files_to_transcribe = prepare_audio_files(audio_files, mode="plain", model_name=config.model_name)
+            files_to_transcribe = prepare_audio_files(audio_files, model_name=config.model_name)
             timing_stats.preparation_seconds = time.perf_counter() - preparation_started_at
             original_files = normalize_transcribe_audio_files(audio_files)
             temp_files.extend(file for file in files_to_transcribe if file not in original_files)

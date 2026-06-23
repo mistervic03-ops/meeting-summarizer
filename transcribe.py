@@ -10,14 +10,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydub import AudioSegment
 
 from backend.services.stt import get_stt_provider
-from summarization.models import NormalizedTranscript, TranscriptUtterance
 from utils import AudioChunkConfig, cleanup_temp_files, ensure_audio_file, get_audio_format, split_audio_if_needed
 
 
@@ -27,14 +26,11 @@ logger = logging.getLogger(__name__)
 TRANSCRIBE_RUNTIME_VERSION = "chunk-retry-v2"
 TRACE_PREFIX = "[TRANSCRIBE_TRACE]"
 DEFAULT_TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
-DEFAULT_DIARIZED_TRANSCRIPTION_MODEL = "gpt-4o-transcribe-diarize"
 DEFAULT_TRANSCRIPTION_LANGUAGE = "ko"
 DEFAULT_PLAIN_CHUNK_DURATION_SECONDS = 300
 DEFAULT_PLAIN_CHUNK_OVERLAP_SECONDS = 0
 DEFAULT_PLAIN_TRANSCRIPTION_CONCURRENCY = 3
 MAX_PLAIN_TRANSCRIPTION_CONCURRENCY = 5
-DEFAULT_DIARIZED_CHUNK_DURATION_SECONDS = 150
-DEFAULT_DIARIZED_CHUNK_OVERLAP_SECONDS = 0
 CHUNK_DURATION_TOLERANCE_SECONDS = 3
 INPUT_TOO_LARGE_MAX_RETRY_DEPTH = 2
 MIN_RETRY_CHUNK_DURATION_SECONDS = 30
@@ -56,7 +52,7 @@ class AudioChunkDiagnostic:
 class TranscriptionTimingStats:
     """전사 workflow의 실제 소요 시간을 요약하기 위한 상태입니다."""
 
-    mode: Literal["plain", "diarized"]
+    mode: str
     model_name: str
     chunk_config: AudioChunkConfig
     workflow_started_at: float = field(default_factory=time.perf_counter)
@@ -162,7 +158,6 @@ def build_timing_summary(stats: TranscriptionTimingStats) -> dict[str, object]:
 
 
 def resolve_transcription_model_name(
-    mode: Literal["plain", "diarized"],
     timing_stats: TranscriptionTimingStats | None = None,
     model_name: str | None = None,
 ) -> str:
@@ -171,9 +166,7 @@ def resolve_transcription_model_name(
         return model_name
     if timing_stats is not None:
         return timing_stats.model_name
-    if mode == "plain":
-        return get_transcription_model()
-    return get_diarized_transcription_model()
+    return get_transcription_model()
 
 
 def stt_vocabulary_hints_enabled() -> bool:
@@ -285,8 +278,9 @@ def deduplicate_stt_vocabulary_terms(terms: list[str]) -> list[str]:
     return result
 
 
-def get_stt_vocabulary_prompt_for_request(mode: Literal["plain", "diarized"], model_name: str) -> str:
+def get_stt_vocabulary_prompt_for_request(model_name: str) -> str:
     """현재 요청에 사용할 STT vocabulary prompt를 반환하고 compact trace를 남깁니다."""
+    mode = "plain"
     if not stt_vocabulary_hints_enabled():
         log_trace_event("stt_vocabulary", mode=mode, model=model_name, enabled=False, terms_loaded=0, prompt_chars=0)
         return ""
@@ -304,9 +298,9 @@ def get_stt_vocabulary_prompt_for_request(mode: Literal["plain", "diarized"], mo
     return prompt
 
 
-def transcription_request_supports_vocabulary_prompt(mode: Literal["plain", "diarized"], model_name: str) -> bool:
+def transcription_request_supports_vocabulary_prompt(model_name: str) -> bool:
     """현재 OpenAI STT 요청에 vocabulary prompt를 넣을지 판단합니다."""
-    return mode in {"plain", "diarized"} and bool(model_name)
+    return bool(model_name)
 
 
 def is_unsupported_vocabulary_prompt_error(exc: Exception) -> bool:
@@ -324,13 +318,10 @@ logger.warning("%s transcribe_import runtime_version=%s file=%s", get_trace_pref
 
 def transcribe_audio(
     audio_files: Path | list[Path],
-    mode: Literal["plain", "diarized"] = "plain",
     progress_callback: Callable[[int, int], None] | None = None,
     stt_provider: str | None = None,
-) -> str | NormalizedTranscript:
+) -> str:
     """설정된 STT provider로 하나 이상의 오디오 파일을 전사합니다."""
-    if mode != "plain":
-        return _transcribe_audio_openai(audio_files, mode=mode, progress_callback=progress_callback)
     return get_stt_provider(_transcribe_audio_openai, provider_name=stt_provider).transcribe(
         audio_files,
         progress_callback=progress_callback,
@@ -339,26 +330,21 @@ def transcribe_audio(
 
 def _transcribe_audio_openai(
     audio_files: Path | list[Path],
-    mode: Literal["plain", "diarized"] = "plain",
     progress_callback: Callable[[int, int], None] | None = None,
-) -> str | NormalizedTranscript:
+) -> str:
     """하나 이상의 오디오 파일을 전사하고 전사문을 하나로 합칩니다."""
     workflow_started_at = time.perf_counter()
-    resolved_model = get_diarized_transcription_model() if mode == "diarized" else get_transcription_model()
+    resolved_model = get_transcription_model()
     log_transcribe_trace(
         "transcribe_audio",
-        mode=mode,
+        mode="plain",
         model_name=resolved_model,
         audio_path=audio_files if isinstance(audio_files, Path) else None,
     )
-    if mode == "diarized":
-        return transcribe_audio_diarized(audio_files)
-    if mode != "plain":
-        raise ValueError(f"Unsupported transcription mode: {mode}")
 
     # 이 함수가 새로 만든 청크 파일만 추적해서 finally에서 정리합니다.
     temp_files: list[Path] = []
-    chunk_config = get_audio_chunk_config("plain")
+    chunk_config = get_audio_chunk_config()
     concurrency = get_plain_transcription_concurrency()
     timing_stats = TranscriptionTimingStats(
         mode="plain",
@@ -380,7 +366,7 @@ def _transcribe_audio_openai(
     try:
         # 25MB 초과 파일은 utils.py에서 청크로 나뉘어 API 호출 대상이 됩니다.
         preparation_started_at = time.perf_counter()
-        files_to_transcribe = prepare_audio_files(audio_files, mode="plain", model_name=resolved_model)
+        files_to_transcribe = prepare_audio_files(audio_files, model_name=resolved_model)
         timing_stats.preparation_seconds = time.perf_counter() - preparation_started_at
         original_files = normalize_audio_files(audio_files)
         temp_files.extend(file for file in files_to_transcribe if file not in original_files)
@@ -423,108 +409,6 @@ def _transcribe_audio_openai(
             error=exc,
         )
         raise RuntimeError(f"Audio transcription failed: {exc}") from exc
-    finally:
-        cleanup_temp_files(temp_files)
-
-
-def transcribe_audio_diarized(audio_files: Path | list[Path]) -> NormalizedTranscript:
-    """diarization provider 경로로 오디오를 전사하고 내부 transcript 구조를 반환합니다."""
-    workflow_started_at = time.perf_counter()
-    resolved_model = get_diarized_transcription_model()
-    log_transcribe_trace(
-        "transcribe_audio_diarized",
-        mode="diarized",
-        model_name=resolved_model,
-        audio_path=audio_files if isinstance(audio_files, Path) else None,
-    )
-    temp_files: list[Path] = []
-    chunk_config = get_audio_chunk_config("diarized")
-    timing_stats = TranscriptionTimingStats(
-        mode="diarized",
-        model_name=resolved_model,
-        chunk_config=chunk_config,
-        workflow_started_at=workflow_started_at,
-        concurrency=1,
-    )
-    log_trace_event(
-        "transcription_workflow_start",
-        mode="diarized",
-        resolved_model=timing_stats.model_name,
-        path=audio_files if isinstance(audio_files, Path) else "multiple",
-        chunk_duration_seconds=chunk_config.duration_seconds,
-        chunk_overlap_seconds=chunk_config.overlap_seconds,
-    )
-
-    try:
-        preparation_started_at = time.perf_counter()
-        files_to_transcribe = prepare_audio_files(audio_files, mode="diarized", model_name=resolved_model)
-        timing_stats.preparation_seconds = time.perf_counter() - preparation_started_at
-        original_files = normalize_audio_files(audio_files)
-        temp_files.extend(file for file in files_to_transcribe if file not in original_files)
-        timing_stats.total_chunks = len(files_to_transcribe)
-        logger.info(
-            "diarized_transcription prepared chunk_count=%s chunk_duration_seconds=%s chunk_overlap_seconds=%s",
-            len(files_to_transcribe),
-            chunk_config.duration_seconds,
-            chunk_config.overlap_seconds,
-        )
-        log_transcription_run_diagnostics(
-            mode="diarized",
-            model_name=resolved_model,
-            source_files=original_files,
-            chunk_files=files_to_transcribe,
-            chunk_config=chunk_config,
-        )
-
-        segments: list[dict[str, Any]] = []
-        for chunk_index, audio_file in enumerate(files_to_transcribe, start=1):
-            chunk_started_at = time.perf_counter()
-            log_trace_event(
-                "chunk_request_start",
-                mode="diarized",
-                index=chunk_index,
-                total=len(files_to_transcribe),
-                path=audio_file,
-            )
-            segments.extend(
-                call_diarized_transcription_provider(
-                    audio_file,
-                    chunk_config=chunk_config,
-                    source_files=original_files,
-                    timing_stats=timing_stats,
-                    model_name=resolved_model,
-                )
-            )
-            chunk_elapsed_seconds = time.perf_counter() - chunk_started_at
-            timing_stats.record_chunk(chunk_elapsed_seconds)
-            log_trace_event(
-                "chunk_completed",
-                mode="diarized",
-                index=chunk_index,
-                total=len(files_to_transcribe),
-                elapsed_seconds=chunk_elapsed_seconds,
-            )
-
-        merge_started_at = time.perf_counter()
-        log_trace_event("merge_start", mode="diarized", segment_count=len(segments))
-        normalized_transcript = diarized_segments_to_normalized_transcript(segments)
-        timing_stats.merge_seconds = time.perf_counter() - merge_started_at
-        log_trace_event("merge_complete", mode="diarized", elapsed_seconds=timing_stats.merge_seconds)
-        log_trace_event(
-            "transcription_complete",
-            mode="diarized",
-            total_elapsed_seconds=time.perf_counter() - timing_stats.workflow_started_at,
-        )
-        log_trace_event("transcription_summary", **build_timing_summary(timing_stats))
-        return normalized_transcript
-    except Exception as exc:
-        log_trace_event(
-            "transcription_workflow_failed",
-            mode="diarized",
-            elapsed_seconds=format_elapsed_seconds(workflow_started_at),
-            error=exc,
-        )
-        raise RuntimeError(f"Diarized audio transcription failed: {exc}") from exc
     finally:
         cleanup_temp_files(temp_files)
 
@@ -663,9 +547,9 @@ def transcribe_chunk(
     model_name: str | None = None,
 ) -> str:
     """설정된 STT 모델로 단일 오디오 청크를 전사합니다."""
-    chunk_config = chunk_config or get_audio_chunk_config("plain")
+    chunk_config = chunk_config or get_audio_chunk_config()
     source_files = source_files or [audio_file]
-    resolved_model = resolve_transcription_model_name("plain", timing_stats, model_name)
+    resolved_model = resolve_transcription_model_name(timing_stats, model_name)
     log_transcribe_trace(
         "transcribe_chunk",
         mode="plain",
@@ -679,7 +563,6 @@ def transcribe_chunk(
     try:
         transcription = call_openai_transcription(
             audio_file=audio_file,
-            mode="plain",
             chunk_config=chunk_config,
             source_files=source_files,
             retry_depth=retry_depth,
@@ -703,25 +586,26 @@ def transcribe_chunk(
 
 def prepare_audio_files(
     audio_files: Path | list[Path],
-    mode: Literal["plain", "diarized"] = "plain",
     model_name: str | None = None,
 ) -> list[Path]:
     """오디오 입력을 검증하고 API 크기 제한을 넘는 파일을 분할합니다."""
     preparation_started_at = time.perf_counter()
-    resolved_model = model_name or resolve_transcription_model_name(mode)
+    mode = "plain"
+    chunk_config = get_audio_chunk_config()
+    resolved_model = model_name or resolve_transcription_model_name()
     log_transcribe_trace(
         "prepare_audio_files",
         mode=mode,
         model_name=resolved_model,
         audio_path=audio_files if isinstance(audio_files, Path) else None,
-        chunk_config=get_audio_chunk_config(mode),
+        chunk_config=chunk_config,
     )
     log_trace_event(
         "audio_preparation_start",
         mode=mode,
         path=audio_files if isinstance(audio_files, Path) else "multiple",
-        chunk_duration_seconds=get_audio_chunk_config(mode).duration_seconds,
-        chunk_overlap_seconds=get_audio_chunk_config(mode).overlap_seconds,
+        chunk_duration_seconds=chunk_config.duration_seconds,
+        chunk_overlap_seconds=chunk_config.overlap_seconds,
     )
     # 여러 파일을 처리하다 중간 실패해도 이미 생성된 임시 청크를 정리해야 합니다.
     prepared_files: list[Path] = []
@@ -735,7 +619,7 @@ def prepare_audio_files(
             ensure_audio_file(audio_file)
             splitting_started_at = time.perf_counter()
             log_trace_event("chunk_splitting_start", mode=mode, source=audio_file)
-            split_files = split_audio_if_needed(audio_file, chunk_config=get_audio_chunk_config(mode))
+            split_files = split_audio_if_needed(audio_file, chunk_config=chunk_config)
             log_trace_event(
                 "chunk_splitting_complete",
                 mode=mode,
@@ -765,157 +649,8 @@ def normalize_audio_files(audio_files: Path | list[Path]) -> list[Path]:
     return audio_files
 
 
-def normalize_speaker_label(speaker: object) -> str:
-    """provider별 speaker 표기를 내부 표시용 라벨로 정규화합니다."""
-    speaker_text = "" if speaker is None else str(speaker).strip()
-    if not speaker_text:
-        return "Unknown"
-
-    speaker_match = re.fullmatch(r"speaker[\s_-]*(?P<number>\d+)", speaker_text, flags=re.IGNORECASE)
-    if speaker_match:
-        return f"Speaker {int(speaker_match.group('number'))}"
-    return speaker_text
-
-
-def seconds_to_ms(value: object) -> int | None:
-    """초 단위 timestamp를 ms 정수로 변환합니다."""
-    if value is None:
-        return None
-    try:
-        return int(round(float(value) * 1000))
-    except (TypeError, ValueError):
-        return None
-
-
-def diarized_segments_to_utterances(segments: list[dict[str, Any]]) -> list[TranscriptUtterance]:
-    """diarized STT segment payload를 내부 TranscriptUtterance 목록으로 변환합니다."""
-    utterances: list[TranscriptUtterance] = []
-    for segment in segments:
-        text = str(segment.get("text", "")).strip()
-        if not text:
-            continue
-
-        speaker = normalize_speaker_label(segment.get("speaker"))
-        utterance_id = f"u_{len(utterances) + 1:04d}"
-        raw_line = f"{speaker}: {text}"
-        utterances.append(
-            TranscriptUtterance(
-                utterance_id=utterance_id,
-                speaker=speaker,
-                text=text,
-                index=len(utterances),
-                raw_line=raw_line,
-                start_ms=seconds_to_ms(segment.get("start")),
-                end_ms=seconds_to_ms(segment.get("end")),
-            )
-        )
-    return utterances
-
-
-def diarized_segments_to_normalized_transcript(segments: list[dict[str, Any]]) -> NormalizedTranscript:
-    """diarized STT segment payload를 speaker-aware NormalizedTranscript로 변환합니다."""
-    utterances = diarized_segments_to_utterances(segments)
-    text = "\n".join(utterance.raw_line for utterance in utterances)
-    return NormalizedTranscript(utterances=utterances, text=text, meeting_date="")
-
-
-def call_diarized_transcription_provider(
-    audio_file: Path,
-    chunk_config: AudioChunkConfig | None = None,
-    source_files: list[Path] | None = None,
-    timing_stats: TranscriptionTimingStats | None = None,
-    model_name: str | None = None,
-) -> list[dict[str, Any]]:
-    """diarization-capable STT provider를 호출하고 segment payload를 반환합니다."""
-    return call_diarized_transcription_provider_with_retry(
-        audio_file=audio_file,
-        chunk_config=chunk_config or get_audio_chunk_config("diarized"),
-        source_files=source_files or [audio_file],
-        timing_stats=timing_stats,
-        model_name=model_name,
-    )
-
-
-def call_diarized_transcription_provider_with_retry(
-    audio_file: Path,
-    chunk_config: AudioChunkConfig,
-    retry_depth: int = 0,
-    source_files: list[Path] | None = None,
-    timing_stats: TranscriptionTimingStats | None = None,
-    model_name: str | None = None,
-) -> list[dict[str, Any]]:
-    """input_too_large 오류가 나면 해당 diarized 청크를 더 작게 나눠 재시도합니다."""
-    source_files = source_files or [audio_file]
-    resolved_model = resolve_transcription_model_name("diarized", timing_stats, model_name)
-    log_transcribe_trace(
-        "call_diarized_transcription_provider_with_retry",
-        mode="diarized",
-        model_name=resolved_model,
-        audio_path=audio_file,
-        chunk_config=chunk_config,
-        retry_wrapper=True,
-        retry_depth=retry_depth,
-    )
-
-    try:
-        return call_diarized_transcription_provider_once(
-            audio_file,
-            chunk_config=chunk_config,
-            source_files=source_files,
-            retry_depth=retry_depth,
-            timing_stats=timing_stats,
-            model_name=resolved_model,
-        )
-    except Exception as exc:
-        if is_input_too_large_error(exc):
-            return retry_diarized_chunk_after_input_too_large(
-                audio_file=audio_file,
-                chunk_config=chunk_config,
-                retry_depth=retry_depth,
-                source_files=source_files,
-                original_error=exc,
-                timing_stats=timing_stats,
-                model_name=resolved_model,
-            )
-        raise RuntimeError(f"Diarized transcription provider failed for {audio_file}: {exc}") from exc
-
-
-def call_diarized_transcription_provider_once(
-    audio_file: Path,
-    chunk_config: AudioChunkConfig | None = None,
-    source_files: list[Path] | None = None,
-    retry_depth: int = 0,
-    timing_stats: TranscriptionTimingStats | None = None,
-    model_name: str | None = None,
-) -> list[dict[str, Any]]:
-    """diarization-capable STT provider를 한 번 호출합니다."""
-    chunk_config = chunk_config or get_audio_chunk_config("diarized")
-    source_files = source_files or [audio_file]
-    resolved_model = resolve_transcription_model_name("diarized", timing_stats, model_name)
-    log_transcribe_trace(
-        "call_diarized_transcription_provider_once",
-        mode="diarized",
-        model_name=resolved_model,
-        audio_path=audio_file,
-        chunk_config=chunk_config,
-        retry_wrapper=False,
-        retry_depth=retry_depth,
-    )
-    transcription = call_openai_transcription(
-        audio_file=audio_file,
-        mode="diarized",
-        chunk_config=chunk_config,
-        source_files=source_files,
-        retry_depth=retry_depth,
-        timing_stats=timing_stats,
-        model_name=resolved_model,
-    )
-    return extract_diarized_segments(transcription)
-
-
 def call_openai_transcription(
     audio_file: Path,
-    mode: Literal["plain", "diarized"],
     chunk_config: AudioChunkConfig,
     source_files: list[Path],
     retry_depth: int = 0,
@@ -923,7 +658,8 @@ def call_openai_transcription(
     model_name: str | None = None,
 ) -> object:
     """모든 OpenAI STT 호출이 통과하는 단일 래퍼입니다."""
-    resolved_model = resolve_transcription_model_name(mode, timing_stats, model_name)
+    mode = "plain"
+    resolved_model = resolve_transcription_model_name(timing_stats, model_name)
     log_transcribe_trace(
         "call_openai_transcription",
         mode=mode,
@@ -936,7 +672,6 @@ def call_openai_transcription(
     ensure_audio_file(audio_file)
     diagnostic = validate_chunk_before_transcription(
         audio_file,
-        mode,
         chunk_config,
         source_files,
         model_name=resolved_model,
@@ -955,19 +690,11 @@ def call_openai_transcription(
         "model": resolved_model,
         "language": get_transcription_language(),
     }
-    vocabulary_prompt = get_stt_vocabulary_prompt_for_request(mode, resolved_model)
-    if vocabulary_prompt and transcription_request_supports_vocabulary_prompt(mode, resolved_model):
+    vocabulary_prompt = get_stt_vocabulary_prompt_for_request(resolved_model)
+    if vocabulary_prompt and transcription_request_supports_vocabulary_prompt(resolved_model):
         transcription_kwargs["prompt"] = vocabulary_prompt
     elif vocabulary_prompt:
         log_trace_event("stt_vocabulary_skipped", mode=mode, model=resolved_model, reason="unsupported_request")
-
-    if mode == "diarized":
-        transcription_kwargs.update(
-            {
-                "chunking_strategy": "auto",
-                "response_format": "diarized_json",
-            }
-        )
 
     request_started_at = time.perf_counter()
     log_trace_event(
@@ -1012,65 +739,6 @@ def call_openai_transcription(
     return transcription
 
 
-def extract_diarized_segments(transcription: object) -> list[dict[str, Any]]:
-    """provider 응답에서 diarized segment 목록을 추출합니다."""
-    if isinstance(transcription, list):
-        return normalize_diarized_segments(transcription)
-
-    if isinstance(transcription, dict):
-        for key in ("diarized_segments", "segments"):
-            value = transcription.get(key)
-            if isinstance(value, list):
-                return normalize_diarized_segments(value)
-
-    for attr_name in ("diarized_segments", "segments"):
-        value = getattr(transcription, attr_name, None)
-        if isinstance(value, list):
-            return normalize_diarized_segments(value)
-
-    raise ValueError("Diarized transcription response did not include segments.")
-
-
-def normalize_diarized_segments(segments: list[object]) -> list[dict[str, Any]]:
-    """provider별 segment 객체를 speaker/text/start/end dict로 정규화합니다."""
-    normalized_segments: list[dict[str, Any]] = []
-    for segment in segments:
-        normalized_segment = normalize_diarized_segment(segment)
-        if normalized_segment is not None:
-            normalized_segments.append(normalized_segment)
-    return normalized_segments
-
-
-def normalize_diarized_segment(segment: object) -> dict[str, Any] | None:
-    """단일 diarized segment에서 필요한 필드를 추출합니다."""
-    text = get_first_segment_value(segment, ("text", "transcript", "content"))
-    if text is None:
-        return None
-
-    normalized_segment = {
-        "speaker": get_first_segment_value(segment, ("speaker", "speaker_label", "speaker_id")),
-        "text": text,
-    }
-    start = get_first_segment_value(segment, ("start", "start_time", "start_seconds"))
-    end = get_first_segment_value(segment, ("end", "end_time", "end_seconds"))
-    if start is not None:
-        normalized_segment["start"] = start
-    if end is not None:
-        normalized_segment["end"] = end
-    return normalized_segment
-
-
-def get_first_segment_value(segment: object, keys: tuple[str, ...]) -> object:
-    """dict 또는 객체 segment에서 첫 번째 사용 가능한 값을 반환합니다."""
-    for key in keys:
-        if isinstance(segment, dict) and key in segment:
-            return segment[key]
-        value = getattr(segment, key, None)
-        if value is not None:
-            return value
-    return None
-
-
 def create_openai_client() -> OpenAI:
     """환경 변수의 API 키를 사용해 OpenAI API client를 만듭니다."""
     try:
@@ -1086,11 +754,6 @@ def create_openai_client() -> OpenAI:
 def get_transcription_model() -> str:
     """환경 변수로 설정된 STT 모델명을 반환합니다."""
     return os.getenv("OPENAI_TRANSCRIPTION_MODEL", DEFAULT_TRANSCRIPTION_MODEL)
-
-
-def get_diarized_transcription_model() -> str:
-    """환경 변수로 설정된 diarization STT 모델명을 반환합니다."""
-    return os.getenv("OPENAI_DIARIZED_TRANSCRIPTION_MODEL", DEFAULT_DIARIZED_TRANSCRIPTION_MODEL)
 
 
 def get_transcription_language() -> str:
@@ -1110,19 +773,12 @@ def get_plain_transcription_concurrency() -> int:
     return min(max(parsed_value, 1), MAX_PLAIN_TRANSCRIPTION_CONCURRENCY)
 
 
-def get_audio_chunk_config(mode: Literal["plain", "diarized"]) -> AudioChunkConfig:
-    """전사 모드에 맞는 오디오 청크 설정을 반환합니다."""
-    if mode == "plain":
-        return AudioChunkConfig(
-            duration_seconds=get_plain_chunk_duration_seconds(),
-            overlap_seconds=get_plain_chunk_overlap_seconds(),
-        )
-    if mode == "diarized":
-        return AudioChunkConfig(
-            duration_seconds=get_diarized_chunk_duration_seconds(),
-            overlap_seconds=get_diarized_chunk_overlap_seconds(),
-        )
-    raise ValueError(f"Unsupported transcription mode: {mode}")
+def get_audio_chunk_config() -> AudioChunkConfig:
+    """plain 전사용 오디오 청크 설정을 반환합니다."""
+    return AudioChunkConfig(
+        duration_seconds=get_plain_chunk_duration_seconds(),
+        overlap_seconds=get_plain_chunk_overlap_seconds(),
+    )
 
 
 def get_plain_chunk_duration_seconds() -> int:
@@ -1138,22 +794,6 @@ def get_plain_chunk_overlap_seconds() -> int:
     return get_non_negative_int_env(
         "PLAIN_CHUNK_OVERLAP_SECONDS",
         DEFAULT_PLAIN_CHUNK_OVERLAP_SECONDS,
-    )
-
-
-def get_diarized_chunk_duration_seconds() -> int:
-    """diarized STT 전용 청크 길이를 초 단위로 반환합니다."""
-    return get_positive_int_env(
-        "DIARIZED_CHUNK_DURATION_SECONDS",
-        DEFAULT_DIARIZED_CHUNK_DURATION_SECONDS,
-    )
-
-
-def get_diarized_chunk_overlap_seconds() -> int:
-    """diarized STT 전용 청크 overlap을 초 단위로 반환합니다."""
-    return get_non_negative_int_env(
-        "DIARIZED_CHUNK_OVERLAP_SECONDS",
-        DEFAULT_DIARIZED_CHUNK_OVERLAP_SECONDS,
     )
 
 
@@ -1212,7 +852,7 @@ def get_file_size_mb(audio_file: Path) -> float:
 
 
 def log_transcription_run_diagnostics(
-    mode: Literal["plain", "diarized"],
+    mode: str,
     model_name: str,
     source_files: list[Path],
     chunk_files: list[Path],
@@ -1254,14 +894,14 @@ def log_transcription_run_diagnostics(
 
 def validate_chunk_before_transcription(
     audio_file: Path,
-    mode: Literal["plain", "diarized"],
     chunk_config: AudioChunkConfig,
     source_files: list[Path],
     model_name: str | None = None,
 ) -> AudioChunkDiagnostic:
     """OpenAI 호출 직전에 chunk duration/size가 의심스러운지 확인합니다."""
+    mode = "plain"
     diagnostic = build_audio_chunk_diagnostic(audio_file)
-    resolved_model = model_name or resolve_transcription_model_name(mode)
+    resolved_model = model_name or resolve_transcription_model_name()
     log_transcribe_trace(
         "validate_chunk_before_transcription",
         mode=mode,
@@ -1376,7 +1016,7 @@ def retry_plain_chunk_after_input_too_large(
     retry_started_at = time.perf_counter()
     if timing_stats is not None:
         timing_stats.record_retry()
-    resolved_model = resolve_transcription_model_name("plain", timing_stats, model_name)
+    resolved_model = resolve_transcription_model_name(timing_stats, model_name)
     log_transcribe_trace(
         "retry_plain_chunk_after_input_too_large",
         mode="plain",
@@ -1389,7 +1029,6 @@ def retry_plain_chunk_after_input_too_large(
     log_trace_event("retry_start", mode="plain", path=audio_file, retry_depth=retry_depth + 1)
     retry_files = split_chunk_for_input_too_large(
         audio_file,
-        "plain",
         chunk_config,
         retry_depth,
         original_error,
@@ -1423,76 +1062,16 @@ def retry_plain_chunk_after_input_too_large(
         cleanup_temp_files(generated_files)
 
 
-def retry_diarized_chunk_after_input_too_large(
-    audio_file: Path,
-    chunk_config: AudioChunkConfig,
-    retry_depth: int,
-    source_files: list[Path],
-    original_error: Exception,
-    timing_stats: TranscriptionTimingStats | None = None,
-    model_name: str | None = None,
-) -> list[dict[str, Any]]:
-    """diarized chunk가 너무 크면 더 작은 청크로 나눠 재시도합니다."""
-    retry_started_at = time.perf_counter()
-    if timing_stats is not None:
-        timing_stats.record_retry()
-    resolved_model = resolve_transcription_model_name("diarized", timing_stats, model_name)
-    log_transcribe_trace(
-        "retry_diarized_chunk_after_input_too_large",
-        mode="diarized",
-        model_name=resolved_model,
-        audio_path=audio_file,
-        chunk_config=chunk_config,
-        retry_wrapper=True,
-        retry_depth=retry_depth,
-    )
-    log_trace_event("retry_start", mode="diarized", path=audio_file, retry_depth=retry_depth + 1)
-    retry_files = split_chunk_for_input_too_large(
-        audio_file,
-        "diarized",
-        chunk_config,
-        retry_depth,
-        original_error,
-        model_name=resolved_model,
-    )
-    generated_files = [retry_file for retry_file in retry_files if retry_file != audio_file]
-
-    try:
-        segments: list[dict[str, Any]] = []
-        for retry_file in retry_files:
-            segments.extend(
-                call_diarized_transcription_provider_with_retry(
-                    retry_file,
-                    chunk_config=build_retry_chunk_config(chunk_config),
-                    retry_depth=retry_depth + 1,
-                    source_files=source_files,
-                    timing_stats=timing_stats,
-                    model_name=resolved_model,
-                )
-            )
-        log_trace_event(
-            "retry_complete",
-            mode="diarized",
-            path=audio_file,
-            retry_depth=retry_depth + 1,
-            elapsed_seconds=time.perf_counter() - retry_started_at,
-            retry_chunk_count=len(retry_files),
-        )
-        return segments
-    finally:
-        cleanup_temp_files(generated_files)
-
-
 def split_chunk_for_input_too_large(
     audio_file: Path,
-    mode: Literal["plain", "diarized"],
     chunk_config: AudioChunkConfig,
     retry_depth: int,
     original_error: Exception,
     model_name: str | None = None,
 ) -> list[Path]:
     """input_too_large chunk를 더 작은 청크로 분할합니다."""
-    resolved_model = model_name or resolve_transcription_model_name(mode)
+    mode = "plain"
+    resolved_model = model_name or resolve_transcription_model_name()
     log_transcribe_trace(
         "split_chunk_for_input_too_large",
         mode=mode,
@@ -1536,7 +1115,7 @@ def split_chunk_for_input_too_large(
 
 def build_retry_chunk_config(chunk_config: AudioChunkConfig) -> AudioChunkConfig:
     """재시도용으로 더 작은 chunk 설정을 만듭니다."""
-    current_duration_seconds = chunk_config.duration_seconds or DEFAULT_DIARIZED_CHUNK_DURATION_SECONDS
+    current_duration_seconds = chunk_config.duration_seconds or DEFAULT_PLAIN_CHUNK_DURATION_SECONDS
     retry_duration_seconds = max(current_duration_seconds // 2, MIN_RETRY_CHUNK_DURATION_SECONDS)
     return AudioChunkConfig(duration_seconds=retry_duration_seconds, overlap_seconds=0)
 
