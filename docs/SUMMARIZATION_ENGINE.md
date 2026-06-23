@@ -21,6 +21,8 @@ The current React and FastAPI flow is:
 7. `summarize_transcript()`
 8. `ResultPage`
 
+The UI also supports direct text/transcript upload (`텍스트 업로드` mode), which skips STT and sends the provided transcript to the transcript-job summarization path.
+
 Important properties:
 
 - STT and meeting-minutes generation are separated.
@@ -40,6 +42,7 @@ summarization/
   profiling.py
   prompts.py
   schemas.py
+  glossary.py       # 요약 glossary 용어 로딩, 파싱, 길이 제한
   extraction.py
   validation.py
   rendering.py
