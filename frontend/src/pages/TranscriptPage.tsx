@@ -3,7 +3,8 @@ import { Download, Loader2, RotateCcw, Send } from "lucide-react";
 import ProgressPanel from "../components/ProgressPanel";
 import ThemeToggle from "../components/ThemeToggle";
 import { useMeetingJob } from "../hooks/useMeetingJob";
-import type { MeetingType } from "../api/types";
+import type { PrecomputedSummaryState } from "../hooks/usePrecomputedSummary";
+import type { JobResult, MeetingType } from "../api/types";
 import ResultPage from "./ResultPage";
 
 interface TranscriptPageProps {
@@ -11,6 +12,7 @@ interface TranscriptPageProps {
   filename: string;
   meetingType?: MeetingType;
   onBack?: () => void;
+  precomputedSummary?: PrecomputedSummaryState;
   transcript: string;
 }
 
@@ -28,17 +30,27 @@ const SUMMARY_PROGRESS_STEPS = [
   { label: "결과 정리", progress: 100 }
 ];
 
-export default function TranscriptPage({ context = "", filename, meetingType = "execution", onBack, transcript }: TranscriptPageProps) {
+export default function TranscriptPage({
+  context = "",
+  filename,
+  meetingType = "execution",
+  onBack,
+  precomputedSummary,
+  transcript
+}: TranscriptPageProps) {
+  const [acceptedPrecomputedResult, setAcceptedPrecomputedResult] = useState<JobResult | null>(null);
   const [isTranscriptManuallyEdited, setIsTranscriptManuallyEdited] = useState(false);
   const [editedTranscript, setEditedTranscript] = useState(transcript);
   const [showUploadResetConfirm, setShowUploadResetConfirm] = useState(false);
   const { error, jobStatus, result, startTranscriptJob, status } = useMeetingJob();
   const isGenerating = status === "pending" || status === "processing";
   const hasChanges = isTranscriptManuallyEdited;
+  const isPrecomputedSummaryStale = Boolean(precomputedSummary?.isStale || editedTranscript !== transcript);
   const stats = useMemo(() => getTranscriptStats(editedTranscript), [editedTranscript]);
   const warnings = useMemo(() => getTranscriptWarnings(editedTranscript), [editedTranscript]);
 
   useEffect(() => {
+    setAcceptedPrecomputedResult(null);
     setIsTranscriptManuallyEdited(false);
     setEditedTranscript(transcript);
   }, [transcript]);
@@ -49,14 +61,28 @@ export default function TranscriptPage({ context = "", filename, meetingType = "
     }
   }, [isTranscriptManuallyEdited, transcript]);
 
-  if (result) {
-    return <ResultPage filename={result.filename} meetingType={result.meeting_type ?? meetingType} result={result} />;
+  const completedResult = acceptedPrecomputedResult ?? result;
+
+  if (completedResult) {
+    return (
+      <ResultPage
+        filename={completedResult.filename}
+        meetingType={completedResult.meeting_type ?? meetingType}
+        result={completedResult}
+      />
+    );
   }
 
   /**
    * Starts meeting minutes generation using the edited transcript.
    */
   function handleGenerate() {
+    const nextPrecomputedResult = isPrecomputedSummaryStale ? null : precomputedSummary?.getPrecomputedResult();
+    if (nextPrecomputedResult) {
+      setAcceptedPrecomputedResult(nextPrecomputedResult);
+      return;
+    }
+
     startTranscriptJob({
       context,
       filename,

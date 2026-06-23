@@ -61,6 +61,8 @@ class SummarizeMinutesTests(unittest.TestCase):
         self.assertIn("1인칭 표현(저, 제가) 자체를 담당자명으로 쓰지 마세요", prompt)
         self.assertIn("회의록 작성 초점", prompt)
         self.assertIn("JSON 내용을 그대로 나열하지 말고", prompt)
+        self.assertIn("숫자 범위 표현에 물결표(~)를 사용하지 마세요", prompt)
+        self.assertIn('"10~20건" 대신 "10-20건"', prompt)
         self.assertIn("회의 요약", prompt)
         self.assertIn("주요 결정사항", prompt)
         self.assertIn("액션 아이템", prompt)

@@ -6,6 +6,7 @@ import StatusPill from "../components/StatusPill";
 import ThemeToggle from "../components/ThemeToggle";
 import ContextHelp from "../components/ui/ContextHelp";
 import { useMeetingJob } from "../hooks/useMeetingJob";
+import { usePrecomputedSummary } from "../hooks/usePrecomputedSummary";
 import type { MeetingType, SttProviderMode } from "../api/types";
 import { DEFAULT_MEETING_TYPE, MEETING_TYPE_OPTIONS, getMeetingTypeLabel } from "../utils/meetingTypes";
 import ResultPage from "./ResultPage";
@@ -95,6 +96,13 @@ export default function UploadPage({ onShowHistory }: UploadPageProps) {
   const canProcess =
     !isBusy &&
     (inputMode === "audio" ? Boolean(audioFile) : Boolean(transcriptText.trim()));
+  const reviewContext = transcriptResult?.context ?? buildMeetingContext(contextText);
+  const reviewMeetingType = transcriptResult?.meeting_type ?? meetingType;
+  const precomputedSummary = usePrecomputedSummary({
+    context: reviewContext,
+    meetingType: reviewMeetingType,
+    transcriptResult
+  });
 
   useEffect(() => {
     if (!transcriptFile) {
@@ -144,9 +152,10 @@ export default function UploadPage({ onShowHistory }: UploadPageProps) {
   if (transcriptResult) {
     return (
       <TranscriptPage
-        context={transcriptResult.context ?? ""}
+        context={reviewContext}
         filename={transcriptResult.filename}
-        meetingType={transcriptResult.meeting_type ?? meetingType}
+        meetingType={reviewMeetingType}
+        precomputedSummary={precomputedSummary}
         transcript={transcriptResult.transcript}
         onBack={() => {
           resetJobState();

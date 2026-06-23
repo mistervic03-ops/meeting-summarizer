@@ -55,12 +55,14 @@ This document describes the current repository structure and production data flo
 - The frontend polls `GET /api/jobs/{job_id}` and then fetches `GET /api/jobs/{job_id}/transcript`.
 - Review UI entry: `frontend/src/pages/TranscriptPage.tsx`.
 - The reviewed transcript is submitted as plain text.
+- After the transcript is fetched, the frontend starts a background pre-computation summary job while the user reviews the transcript. If the user submits the unchanged transcript after that job completes, the precomputed result can be shown immediately.
 
 ### 4. Summarization Job
 
 - API client: `frontend/src/api/jobs.ts` calls `POST /api/transcript-jobs`.
 - Backend route: `backend/api/routes.py:create_transcript_process_job()`.
 - Reviewed transcripts can include `transcription_job_id` so the generated minutes job updates the original STT meeting history row instead of inserting a duplicate row.
+- For audio uploads, the same transcript job endpoint is also used by the frontend background pre-computation path during transcript review.
 - Route schedules `backend/services/pipeline.py:run_transcript_summary_pipeline()`.
 - The pipeline calls `summarize.py:summarize_transcript()`, which delegates to `summarization/pipeline.py:summarize_transcript()`.
 - Summarization progress is reported through a summary progress callback, then exposed through the same `GET /api/jobs/{job_id}` polling status fields used by the frontend progress panel.
