@@ -90,11 +90,14 @@ preprocess_transcript
 - assigns `utterance_id`
 - preserves speaker labels when present
 - preserves speakerless plain transcript lines as line-level utterances
+- splits speakerless plain transcript lines longer than 500 characters into sentence-boundary windows
 - renders speakerless utterances as `[utterance_id] text` without a synthetic speaker label
 
 ### 2. Profile and Strategy Selection
 
-`analyze_transcript_profile()` measures transcript complexity, including utterance count, speaker count, and cue density.
+`analyze_transcript_profile()` measures transcript complexity, including utterance count, speaker count, and cue counts.
+
+`choose_processing_strategy()` is calibrated for plain STT and selects strategy from transcript length and absolute cue count rather than speaker count or utterance count.
 
 `choose_processing_strategy()` selects:
 

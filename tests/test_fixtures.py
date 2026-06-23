@@ -69,7 +69,7 @@ class TranscriptFixtureTests(unittest.TestCase):
         ambiguous_profile = analyze_fixture("ambiguous_owner_due_date_meeting.txt")
 
         self.assertEqual(choose_processing_strategy(short_profile), "direct")
-        self.assertEqual(choose_processing_strategy(long_profile), "chunk")
+        self.assertEqual(choose_processing_strategy(long_profile), "deep")
         self.assertLessEqual(no_action_profile.action_cue_count, 12)
         self.assertEqual(choose_processing_strategy(no_action_profile), "direct")
         self.assertGreaterEqual(ambiguous_profile.action_cue_count, 30)

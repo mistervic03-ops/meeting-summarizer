@@ -279,6 +279,26 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(normalized.text, "오늘 회의는 네 가지 안건입니다.")
         self.assertEqual(normalized.render_for_llm(), "[u_0001] 오늘 회의는 네 가지 안건입니다.")
 
+    def test_normalize_transcript_splits_long_speakerless_lines_at_sentence_boundaries(self) -> None:
+        """긴 plain STT 줄은 sentence boundary 우선으로 source 단위를 나눕니다."""
+        first_sentence = "가" * 240 + "."
+        second_sentence = "나" * 240 + "?"
+        third_sentence = "다" * 100
+        normalized = summarize.normalize_transcript(first_sentence + second_sentence + third_sentence)
+
+        self.assertEqual(len(normalized.utterances), 2)
+        self.assertEqual(normalized.utterances[0].text, first_sentence + second_sentence)
+        self.assertEqual(normalized.utterances[1].text, third_sentence)
+        self.assertTrue(all(len(utterance.text) <= 500 for utterance in normalized.utterances))
+        self.assertEqual([utterance.speaker for utterance in normalized.utterances], [None, None])
+
+    def test_normalize_transcript_hard_splits_long_speakerless_lines_without_sentence_boundary(self) -> None:
+        """sentence boundary가 없으면 500자 단위로 hard split합니다."""
+        normalized = summarize.normalize_transcript("가" * 650)
+
+        self.assertEqual([len(utterance.text) for utterance in normalized.utterances], [500, 150])
+        self.assertEqual([utterance.speaker for utterance in normalized.utterances], [None, None])
+
     def test_normalize_transcript_treats_common_colon_headings_as_plain_text(self) -> None:
         """plain transcript의 일반 heading/key label은 speaker로 보지 않습니다."""
         heading_lines = [
@@ -948,8 +968,8 @@ Speaker 1: 배포 확인
 
         self.assertEqual(summarize.choose_processing_strategy(profile), "direct")
 
-    def test_choose_processing_strategy_uses_chunk_for_many_utterances(self) -> None:
-        """발화 수가 많은 transcript는 향후 chunk 후보로 분류합니다."""
+    def test_choose_processing_strategy_ignores_many_utterances_without_size_or_cues(self) -> None:
+        """발화 수만 많은 transcript는 chunk 후보로 분류하지 않습니다."""
         lines = [
             f"{'김민수' if index % 2 == 0 else '이서연'}: 일반 논의 내용 {index}입니다."
             for index in range(80)
@@ -958,9 +978,9 @@ Speaker 1: 배포 확인
         profile = summarize.analyze_transcript_profile(summarize.normalize_transcript("\n".join(lines)))
 
         self.assertEqual(profile.utterance_count, 80)
-        self.assertEqual(summarize.choose_processing_strategy(profile), "chunk")
+        self.assertEqual(summarize.choose_processing_strategy(profile), "direct")
 
-    def test_choose_processing_strategy_uses_chunk_for_high_cue_density(self) -> None:
+    def test_choose_processing_strategy_uses_chunk_for_high_cue_count(self) -> None:
         """cue가 많은 transcript는 길지 않아도 chunk 후보로 분류합니다."""
         lines = [
             f"{'김민수' if index % 2 == 0 else '이서연'}: 확인하고 정리해서 공유하겠습니다."
@@ -972,15 +992,16 @@ Speaker 1: 배포 확인
         self.assertEqual(profile.action_cue_count, 48)
         self.assertEqual(summarize.choose_processing_strategy(profile), "chunk")
 
-    def test_choose_processing_strategy_uses_deep_for_very_long_transcript(self) -> None:
-        """매우 긴 transcript는 보수적으로 Deep 전략을 선택할 수 있습니다."""
-        speakers = ["김민수", "이서연", "박지훈"]
-        lines = [f"{speakers[index % len(speakers)]}: 긴 회의 논의 내용 {index}입니다." for index in range(240)]
+    def test_choose_processing_strategy_uses_deep_for_very_high_cue_count(self) -> None:
+        """cue가 매우 많은 transcript는 Deep 전략을 선택합니다."""
+        lines = [
+            f"{'김민수' if index % 2 == 0 else '이서연'}: 확인하고 정리해서 공유하겠습니다."
+            for index in range(30)
+        ]
 
         profile = summarize.analyze_transcript_profile(summarize.normalize_transcript("\n".join(lines)))
 
-        self.assertEqual(profile.utterance_count, 240)
-        self.assertEqual(profile.estimated_complexity, "complex")
+        self.assertEqual(profile.action_cue_count, 120)
         self.assertEqual(summarize.choose_processing_strategy(profile), "deep")
 
     def test_summarize_transcript_uses_direct_extraction_for_direct_strategy(self) -> None:

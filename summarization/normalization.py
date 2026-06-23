@@ -9,6 +9,8 @@ from summarization.models import NormalizedTranscript, PreprocessedTranscript, T
 
 
 FILLER_TOKENS = {"아", "음", "네네", "어"}
+MAX_SPEAKERLESS_UTTERANCE_CHARS = 500
+SENTENCE_BOUNDARY_CHARS = ".?!。？！"
 PLAIN_HEADING_LABEL_KEYS = {
     "회의목적",
     "목적",
@@ -70,7 +72,7 @@ def normalize_transcript(transcript: str) -> NormalizedTranscript:
                 )
             )
         else:
-            parsed_utterances.append((None, line, raw_line))
+            parsed_utterances.extend(split_speakerless_line(line))
 
     merged_utterances: list[tuple[str | None, str, str]] = []
 
@@ -112,6 +114,30 @@ def is_plain_heading_label(label: str) -> bool:
     """plain transcript heading/key label로 알려진 값인지 반환합니다."""
     label_key = re.sub(r"\s+", "", label.strip()).casefold()
     return label_key in PLAIN_HEADING_LABEL_KEYS
+
+
+def split_speakerless_line(line: str) -> list[tuple[None, str, str]]:
+    """긴 speakerless plain STT 줄을 LLM 근거 추적에 적당한 창으로 나눕니다."""
+    text = line.strip()
+    if len(text) <= MAX_SPEAKERLESS_UTTERANCE_CHARS:
+        return [(None, text, text)]
+
+    utterances: list[tuple[None, str, str]] = []
+    remaining = text
+    while len(remaining) > MAX_SPEAKERLESS_UTTERANCE_CHARS:
+        window = remaining[:MAX_SPEAKERLESS_UTTERANCE_CHARS]
+        split_at = max(window.rfind(boundary) for boundary in SENTENCE_BOUNDARY_CHARS) + 1
+        if split_at <= 0:
+            split_at = MAX_SPEAKERLESS_UTTERANCE_CHARS
+
+        chunk = remaining[:split_at].strip()
+        if chunk:
+            utterances.append((None, chunk, chunk))
+        remaining = remaining[split_at:].strip()
+
+    if remaining:
+        utterances.append((None, remaining, remaining))
+    return utterances
 
 
 def structured_transcript_payload_to_normalized_transcript(payload: object) -> NormalizedTranscript:

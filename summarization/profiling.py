@@ -79,20 +79,11 @@ def choose_processing_strategy(profile: TranscriptProfile) -> ProcessingStrategy
         + profile.risk_cue_count
         + profile.requirement_cue_count
     )
-    cue_density = total_cue_count / max(profile.utterance_count, 1)
+    cue_density = total_cue_count / max(profile.char_count / 1000, 1)
 
-    if (
-        profile.char_count >= 30000
-        or profile.utterance_count >= 220
-        or (profile.speaker_count >= 10 and total_cue_count >= 100)
-    ):
+    if profile.char_count >= 120000 or total_cue_count >= 120:
         return DEEP_STRATEGY
-    if (
-        profile.char_count >= 8000
-        or profile.utterance_count >= 70
-        or profile.estimated_complexity == "complex"
-        or (total_cue_count >= 30 and cue_density >= 1.5)
-    ):
+    if profile.char_count >= 60000 or total_cue_count >= 30:
         return CHUNK_STRATEGY
     return DIRECT_STRATEGY
 
