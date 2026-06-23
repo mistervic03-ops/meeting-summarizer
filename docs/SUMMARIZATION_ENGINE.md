@@ -171,7 +171,7 @@ The backend uses this callback to report:
 - structure extraction complete
 - natural-language minutes generation complete
 
-Progress percentages are monotonic within each independent job. STT chunk progress maps to 10-65%, while the separate summarization job starts at 15%, advances through 25%, 35%, chunk extraction progress from 35-75%, then 80%, 88%, 95%, and completion at 100%.
+Progress percentages are monotonic within each independent job. STT chunk progress maps to 10-80%, transcript preparation reaches 90%, and STT completion reaches 100% before the frontend transitions to review. The separate summarization job starts at 15%, advances through 25%, 35%, chunk extraction progress from 35-75%, then 80%, 88%, 95%, and completion at 100%.
 
 ## Current Constraints
 

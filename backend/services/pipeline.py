@@ -58,7 +58,8 @@ def run_transcription_pipeline(
             stt_provider=stt_provider,
         )
         stt_seconds = time.perf_counter() - stt_started_at
-        mark_job_progress(job_id, 65, "Transcript 정리", "검토 화면에 표시할 transcript를 준비하고 있습니다.", stt_seconds=stt_seconds)
+        mark_job_progress(job_id, 90, "Transcript 정리", "검토 화면에 표시할 transcript를 준비하고 있습니다.", stt_seconds=stt_seconds)
+        mark_job_progress(job_id, 100, "Transcript 준비 완료", "음성 변환이 완료되었습니다. Transcript 화면으로 이동합니다.")
         mark_job_transcribed(job_id, transcript)
         transcript_path, summary_path = save_text_artifacts(job_id, transcript, "")
         update_meeting_artifacts(job_id, "transcript_ready", transcript_path, summary_path)

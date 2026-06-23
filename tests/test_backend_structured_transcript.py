@@ -23,6 +23,7 @@ sys.modules.setdefault("itsdangerous", fake_itsdangerous)
 
 from backend.api import routes
 from backend import storage
+from backend.services import pipeline as backend_pipeline
 from backend.schemas import JobResultResponse, StructuredTranscriptPayload, TranscriptJobRequest, TranscriptResultResponse
 from backend.services.pipeline import (
     build_summary_progress_callback,
@@ -162,7 +163,7 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         updated_job = storage.get_job(job.id)
         self.assertEqual(updated_job.completed_chunks, 2)
         self.assertEqual(updated_job.total_chunks, 5)
-        self.assertEqual(updated_job.progress, 32)
+        self.assertEqual(updated_job.progress, 38)
         self.assertEqual(updated_job.stage, "음성 변환")
         self.assertIn("2/5 구간 완료", updated_job.message)
 
@@ -293,10 +294,14 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         """diarized mode가 꺼져 있으면 기존 plain transcript만 저장합니다."""
         job = storage.create_job("meeting.wav")
 
-        with patch("backend.services.pipeline.transcribe_audio", return_value="plain transcript") as transcribe_mock:
+        with patch("backend.services.pipeline.transcribe_audio", return_value="plain transcript") as transcribe_mock, patch(
+            "backend.services.pipeline.mark_job_progress",
+            wraps=backend_pipeline.mark_job_progress,
+        ) as progress_mock:
             run_transcription_pipeline(job.id, Path("meeting.wav"), meeting_type="execution")
 
         transcribe_mock.assert_called_once_with(Path("meeting.wav"), progress_callback=ANY, stt_provider=None)
+        self.assertEqual([call.args[1] for call in progress_mock.call_args_list], [15, 90, 100])
         self.assertEqual(storage.get_job(job.id).result.transcript, "plain transcript")
         self.assertEqual(storage.get_job(job.id).meeting_type, "execution")
         self.assertIsNone(storage.get_job(job.id).result.structured_transcript)
@@ -316,8 +321,8 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         transcribe_mock.assert_called_once_with(Path("meeting.wav"), progress_callback=ANY, stt_provider="openai")
         self.assertEqual(storage.get_job(job.id).result.transcript, "cloud transcript")
 
-    def test_stt_chunk_progress_uses_10_to_65_percent_range(self) -> None:
-        """STT chunk 진행률은 10%에서 시작해 65%까지 올라갑니다."""
+    def test_stt_chunk_progress_uses_10_to_80_percent_range(self) -> None:
+        """STT chunk 진행률은 10%에서 시작해 80%까지 올라갑니다."""
         job = storage.create_job("meeting.wav")
         storage.mark_job_processing(job.id)
 
@@ -325,10 +330,10 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         self.assertEqual(storage.get_job(job.id).progress, 10)
 
         storage.mark_job_chunk_progress(job.id, completed_chunks=5, total_chunks=10)
-        self.assertEqual(storage.get_job(job.id).progress, 38)
+        self.assertEqual(storage.get_job(job.id).progress, 45)
 
         storage.mark_job_chunk_progress(job.id, completed_chunks=10, total_chunks=10)
-        self.assertEqual(storage.get_job(job.id).progress, 65)
+        self.assertEqual(storage.get_job(job.id).progress, 80)
 
     def test_summary_progress_callback_uses_summary_stage_range(self) -> None:
         """요약 progress callback은 독립 summary job 기준 구간으로 job 상태를 갱신합니다."""

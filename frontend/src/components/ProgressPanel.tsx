@@ -14,7 +14,7 @@ interface ProgressPanelProps {
 
 const DEFAULT_STEPS = [
   { label: "업로드 준비", progress: 10 },
-  { label: "음성 변환", progress: 65 },
+  { label: "음성 변환", progress: 80 },
   { label: "회의 요약 생성", progress: 88 },
   { label: "결과 정리", progress: 100 }
 ];
@@ -168,7 +168,7 @@ function getMinimumProgress(status: JobStatus, reportedProgress: number, stage: 
   }
   if (status === "processing") {
     if (stage.includes("Transcript 정리")) {
-      return Math.max(reportedProgress, 65);
+      return Math.max(reportedProgress, 90);
     }
     if (stage.includes("결과 정리")) {
       return Math.max(reportedProgress, 88);
@@ -200,7 +200,7 @@ function getOptimisticProgressCap(jobStatus: JobStatusResponse | null, status: J
   }
   const chunkProgress = isChunkProgressActive(jobStatus) ? getChunkProgress(jobStatus) : null;
   if (chunkProgress !== null) {
-    return Math.min(65, chunkProgress + 2);
+    return Math.min(80, chunkProgress + 2);
   }
 
   const stage = jobStatus?.stage ?? "";
@@ -211,10 +211,10 @@ function getOptimisticProgressCap(jobStatus: JobStatusResponse | null, status: J
     return 95;
   }
   if (stage.includes("Transcript 정리")) {
-    return 65;
+    return 90;
   }
   if (stage.includes("음성 변환")) {
-    return 65;
+    return 80;
   }
   if (stage.includes("파일 준비")) {
     return 10;
@@ -261,7 +261,7 @@ function getChunkProgress(jobStatus: JobStatusResponse | null): number | null {
   }
 
   const completedRatio = Math.max(0, Math.min(jobStatus.completed_chunks, jobStatus.total_chunks)) / jobStatus.total_chunks;
-  return 10 + Math.round(completedRatio * 55);
+  return 10 + Math.round(completedRatio * 70);
 }
 
 function isChunkProgressActive(jobStatus: JobStatusResponse | null): boolean {

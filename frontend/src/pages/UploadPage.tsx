@@ -39,7 +39,7 @@ const INPUT_MODES: Array<{
 ];
 const TRANSCRIPTION_PROGRESS_STEPS = [
   { label: "업로드 준비", progress: 10 },
-  { label: "음성 변환", progress: 65 },
+  { label: "음성 변환", progress: 80 },
   { label: "결과 정리", progress: 100 }
 ];
 const SUMMARY_PROGRESS_STEPS = [
