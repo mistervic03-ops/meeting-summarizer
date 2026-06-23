@@ -26,7 +26,7 @@ BigxData 내부 회의록 도구입니다. 오디오 업로드, STT, transcript 
 
 ## 브랜치와 배포
 
-- feature branch는 `gpu-whisper-runtime`에서 분기합니다.
+- 기본 브랜치는 `main`입니다. 새 feature branch는 `main`에서 분기하고, Spark 배포도 `main` 기준으로 동기화합니다.
 - Spark 배포에서 local GPU mode는 plain compose가 아니라 overlay 명령으로 활성화합니다.
 
 ```bash

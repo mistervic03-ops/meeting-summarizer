@@ -6,6 +6,7 @@ Current Spark production deployment means:
 
 - Backend runs with the local GPU overlay from `docker-compose.local-gpu.yml`.
 - `STT_PROVIDER=local_gpu_whisper`.
+- The deployed checkout is synchronized from the default `main` branch.
 - User-facing audio flow uses `POST /api/transcriptions`, transcript review, then `POST /api/transcript-jobs`.
 - Default transcription mode is `plain`.
 
@@ -46,6 +47,7 @@ Notes:
 - Requests can no longer select `transcription_mode=diarized` through the public backend API.
 - Internal environment-driven diarized mode has been removed from the backend pipeline.
 - `transcribe.py` is now plain-only for transcription request construction and chunk retry handling.
+- `.env.example` still contains inert diarized environment variable names from the old path. Current source code does not read those variables, and they should not be treated as active configuration.
 
 ## Structured Transcript Speaker Payload
 
@@ -124,4 +126,19 @@ Locations:
 Notes:
 
 - `local_whisper` is code-reachable only through environment/provider selection outside the current API/UI Spark production path.
+- The Spark local GPU backend image intentionally installs Transformers/PyTorch dependencies instead of `faster-whisper`, `ctranslate2`, `av`, `onnxruntime`, or `flatbuffers`.
 - Do not optimize around this provider unless explicitly reviving the CPU path.
+
+## Ignored Local Build Artifacts
+
+Status: not part of repository source; can appear locally after frontend builds.
+
+Why inactive:
+
+- `frontend/dist/` is ignored by `.gitignore` and rebuilt by `Dockerfile.frontend`.
+- Stale local files under `frontend/dist/` can contain old bundled JavaScript, but Docker production builds generate fresh assets from `frontend/src/`.
+
+Notes:
+
+- Do not use ignored `frontend/dist/` content as evidence for current application behavior.
+- If stale local build output is confusing an investigation, remove `frontend/dist/` and rebuild from source.

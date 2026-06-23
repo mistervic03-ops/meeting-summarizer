@@ -4,7 +4,7 @@ This document describes the current repository structure and production data flo
 
 ## Directory Structure
 
-- `backend/`: FastAPI application, API routes, request/response schemas, session handling, storage, and job orchestration.
+- `backend/`: FastAPI application, API routes, request/response schemas, session handling, SQLite meeting history, storage, and job orchestration.
 - `backend/api/`: HTTP route definitions for health checks, uploads, transcript jobs, meeting history, results, and downloads.
 - `backend/services/`: Backend service layer that connects API jobs to STT and summarization.
 - `backend/services/stt/`: STT provider abstraction and local GPU Whisper runtime.
@@ -28,6 +28,19 @@ This document describes the current repository structure and production data flo
 - `Dockerfile.backend`: Base backend image.
 - `Dockerfile.backend.local-gpu`: NGC PyTorch backend image for local GPU Whisper.
 - `Dockerfile.frontend`: React build and nginx serving image.
+- `data/`: Runtime SQLite DB and saved transcript/summary artifacts. This directory is mounted into the backend container and is not source code.
+
+## Current Public API Shape
+
+- Audio upload uses `POST /api/transcriptions` with `audio_file`, optional `context`, `meeting_type`, and `stt_provider`.
+- Transcript/minutes generation uses `POST /api/transcript-jobs` with plain `transcript` text, optional `context`, `meeting_type`, and optional `transcription_job_id`.
+- `GET /api/jobs/{job_id}` is the active polling endpoint for both STT and summary jobs.
+- `GET /api/jobs/{job_id}/transcript` returns plain transcript text for review.
+- `GET /api/jobs/{job_id}/result` returns final minutes plus structured summary fields.
+- `GET /api/jobs/{job_id}/download` serves the generated minutes text file.
+- Meeting history uses `GET /api/meetings`, `GET /api/meetings/{meeting_id}`, and `DELETE /api/meetings/{meeting_id}`.
+
+Structured transcript payloads and speaker fields are no longer part of the frontend, backend schemas, or summarization pipeline. The public summary schema still has `speaker_highlights`, but that field now means discussion/source highlights rather than parsed speaker-attributed utterances.
 
 ## Data Flow: Audio Upload To Final Minutes
 
@@ -55,7 +68,9 @@ This document describes the current repository structure and production data flo
 - The frontend polls `GET /api/jobs/{job_id}` and then fetches `GET /api/jobs/{job_id}/transcript`.
 - Review UI entry: `frontend/src/pages/TranscriptPage.tsx`.
 - The reviewed transcript is submitted as plain text.
-- After the transcript is fetched, the frontend starts a background pre-computation summary job while the user reviews the transcript. If the user submits the unchanged transcript after that job completes, the precomputed result can be shown immediately.
+- After the transcript is fetched, `frontend/src/hooks/usePrecomputedSummary.ts` starts a background summary job through `POST /api/transcript-jobs` while the user reviews the transcript.
+- The precomputed job is tied to the original STT job through `transcription_job_id`, so the meeting history row is updated instead of duplicated.
+- If the user submits the unchanged transcript with the same context and meeting type after that job completes, the precomputed result is shown immediately. Editing the transcript, context, or meeting type marks that precomputed result stale and the user-triggered submit starts a fresh summary job.
 
 ### 4. Summarization Job
 
@@ -91,6 +106,8 @@ This document describes the current repository structure and production data flo
 - Result tabs/components live under `frontend/src/components/`.
 - Download endpoint: `backend/api/routes.py:download_minutes()` serves `GET /api/jobs/{job_id}/download`.
 - History deletion: `frontend/src/pages/HistoryPage.tsx` calls `DELETE /api/meetings/{meeting_id}` to remove a saved meeting row and its transcript/summary artifacts for the current session.
+- Meeting history metadata is stored in `data/meeting_summarizer.db`; transcript and summary text artifacts are stored under `data/meetings/{job_id}/`.
+- Meeting rows expire after 7 days, and `backend/db.py:cleanup_expired()` removes expired rows and their artifacts.
 - Frontend export helpers are in `frontend/src/utils/exportDocument.ts`.
 
 ## Direct Text Upload Flow

@@ -27,6 +27,7 @@ Important properties:
 
 - STT and meeting-minutes generation are separated.
 - Users can review/edit transcripts before summarization.
+- For audio uploads, the frontend starts a background precomputed summary while the transcript review page is open. The precomputed result is used only if transcript text, context, and meeting type are unchanged.
 - Edited transcripts are treated as the source of truth.
 - Meeting type is passed into the summarization policy.
 - Plain transcript input does not require speaker labels.
@@ -90,7 +91,7 @@ preprocess_transcript
 - treats every non-empty transcript line as plain text
 - splits plain transcript lines longer than 500 characters into sentence-boundary windows
 - renders every utterance as `[utterance_id] text`
-- does not parse, store, merge, or synthesize speaker labels
+- does not parse, store, merge, or synthesize speaker labels, even for colon-prefixed lines that look like `Name: text`
 
 ### 2. Profile and Strategy Selection
 
@@ -100,11 +101,13 @@ preprocess_transcript
 
 `choose_processing_strategy()` selects:
 
-- `direct`
-- `chunk`
-- `deep`
+- `direct`: below 60,000 characters and below 30 total semantic cues
+- `chunk`: at least 60,000 characters or at least 30 total semantic cues
+- `deep`: at least 120,000 characters or at least 120 total semantic cues
 
 Deep mode currently uses the chunk pipeline rather than a separate heavy architecture.
+
+`analyze_transcript_profile()` still records utterance count and an estimated complexity label for observability, but processing strategy no longer switches on utterance count alone. This prevents plain STT line/window shape from forcing chunking without enough length or cue evidence.
 
 ### 3. Structured Extraction
 

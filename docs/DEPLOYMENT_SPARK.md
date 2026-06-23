@@ -32,6 +32,13 @@ SUMMARIZATION_PROVIDER=openai
 
 ## 배포 모드
 
+기본 GitHub 브랜치는 `main`입니다. Spark 서버의 `/home/bigxdata/meeting-summarizer` checkout도 배포 전 `main` 기준으로 최신화합니다.
+
+```bash
+git checkout main
+git pull origin main
+```
+
 기존 `docker-compose.yml`은 안정 rollback 기준입니다. plain `docker compose up -d`만 실행하면 local GPU mode가 활성화되지 않습니다.
 
 ```bash
@@ -59,7 +66,6 @@ local GPU variant의 현재 전제:
 - 명백한 반복 붕괴 artifact stabilization 활성화
 - real chunk progress 활성화
 - OpenAI provider는 고급/클라우드 fallback으로 유지
-- diarized backend code는 legacy/experimental path로 유지하지만 UI의 주요 advanced option으로 노출하지 않음
 
 rollback은 overlay 없이 안정 compose를 다시 적용하면 됩니다.
 
@@ -127,7 +133,6 @@ CPU local Whisper에서 관찰한 문제:
 - backend transcription mode default는 계속 `plain`입니다.
 - `STT_PROVIDER=local_whisper`는 실험용으로 유지합니다.
 - `STT_PROVIDER=local_gpu_whisper`는 Spark local GPU runtime의 기본 운영 경로입니다.
-- diarized mode는 backend에 남겨 두되 주요 UI 선택지로 홍보하지 않습니다.
 - local GPU Whisper는 plain path와 resident shared model을 전제로 합니다.
 - local GPU Whisper는 long-form transcript에서 드물게 발생하는 명백한 반복 붕괴 artifact를 보수적으로 줄입니다. 예: `오오오오오`, `KPI, KPI, KPI, KPI`, `. . . . .`.
 - glossary prompt_ids 경로는 기본 비활성화합니다. 필요 시 별도 평가 후 `LOCAL_GPU_ENABLE_STT_PROMPT=true`로만 켭니다.
@@ -153,7 +158,7 @@ ctranslate2.get_cuda_device_count() == 0
 현재 판단:
 
 - CTranslate2/faster-whisper CUDA 경로는 ARM64 CUDA packaging/build 호환성 확인 전까지 blocked 상태입니다.
-- faster-whisper 경로를 버리지는 않습니다.
+- faster-whisper 경로는 Spark production path가 아니며, 현재 local GPU backend image에는 설치하지 않습니다.
 - 다만 무작위 CTranslate2 wheel pinning은 중단하고, 필요하면 ARM64 CUDA build/runtime 계획을 세운 뒤 진행합니다.
 
 현재 breakthrough:
@@ -241,7 +246,7 @@ HuggingFace cache는 `large-v3` 재평가에 유용하므로 당분간 유지합
 
 ```bash
 python3 -m py_compile main.py transcribe.py summarize.py backend/main.py backend/api/routes.py backend/services/pipeline.py backend/storage.py backend/schemas.py
-python3 -m unittest discover -s tests -v
+python3 -m pytest tests/ -v
 ```
 
 프론트엔드:
