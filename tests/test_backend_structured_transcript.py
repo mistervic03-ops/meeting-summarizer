@@ -391,5 +391,59 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         self.assertEqual(storage.get_job(job.id).result.transcript, "plain transcript")
 
 
+class BackendPipelineMeetingFailureTests(unittest.TestCase):
+    """회의록 생성 실패가 영구 meeting row에 기록되는지 확인합니다."""
+
+    def tearDown(self) -> None:
+        """테스트가 만든 인메모리 job과 임시 디렉터리를 정리합니다."""
+        for job_id in list(storage.JOBS):
+            storage.cleanup_job_files(job_id)
+        storage.JOBS.clear()
+
+    def test_summary_pipeline_failure_marks_target_meeting_row_failed(self) -> None:
+        """summary job id와 meeting row id가 분리되어도 실패 상태는 target row에 기록됩니다."""
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            """
+            CREATE TABLE meetings(
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                title TEXT,
+                status TEXT,
+                created_at TEXT,
+                expires_at TEXT,
+                transcript_path TEXT,
+                summary_path TEXT,
+                error TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO meetings(id, session_id, title, status, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("meeting-row-id", "session-id", "meeting.wav", "pending", "created", "expires"),
+        )
+        job = storage.create_job("meeting.wav")
+
+        try:
+            with patch("backend.services.pipeline.get_db_connection", return_value=connection):
+                with patch("backend.services.pipeline.summarize_transcript", side_effect=RuntimeError("bad json")):
+                    run_transcript_summary_pipeline(
+                        job.id,
+                        "plain transcript",
+                        meeting_record_id="meeting-row-id",
+                    )
+
+            row = connection.execute("SELECT status, error FROM meetings WHERE id = ?", ("meeting-row-id",)).fetchone()
+            self.assertEqual(row["status"], "failed")
+            self.assertEqual(row["error"], "bad json")
+            self.assertEqual(storage.get_job(job.id).status, "failed")
+        finally:
+            connection.close()
+
+
 if __name__ == "__main__":
     unittest.main()

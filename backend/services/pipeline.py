@@ -76,8 +76,10 @@ def run_transcript_summary_pipeline(
     context: str = "",
     structured_transcript: dict[str, Any] | None = None,
     meeting_type: str = "general",
+    meeting_record_id: str | None = None,
 ) -> None:
     """검토된 transcript를 기준으로 회의록을 생성하고 작업 저장소에 기록합니다."""
+    target_meeting_id = meeting_record_id or job_id
     mark_job_processing(job_id)
     set_job_meeting_type(job_id, meeting_type)
 
@@ -99,10 +101,16 @@ def run_transcript_summary_pipeline(
         mark_job_progress(job_id, 90, "결과 정리", "결과 화면에 표시할 회의록을 정리하고 있습니다.", summary_seconds=summary_seconds)
         mark_job_completed(job_id, transcript=transcript, summary=summary, structured_transcript=structured_transcript)
         transcript_path, summary_path = save_text_artifacts(job_id, transcript, get_summary_text(summary))
-        update_meeting_artifacts(job_id, "completed", transcript_path, summary_path)
+        update_meeting_artifacts(target_meeting_id, "completed", transcript_path, summary_path)
     except Exception as exc:
         mark_job_failed(job_id, f"회의록 생성 중 오류가 발생했습니다: {exc}")
-        mark_meeting_failed(job_id, str(exc))
+        if not mark_meeting_failed(target_meeting_id, str(exc)):
+            logger.warning(
+                "summary_meeting_failure_update_missed job_id=%s meeting_record_id=%s error=%s",
+                job_id,
+                target_meeting_id,
+                exc,
+            )
 
 
 def get_summary_text(summary: dict[str, Any]) -> str:
@@ -124,10 +132,10 @@ def update_meeting_artifacts(job_id: str, status: str, transcript_path: Path, su
         )
 
 
-def mark_meeting_failed(job_id: str, error: str) -> None:
+def mark_meeting_failed(job_id: str, error: str) -> bool:
     """영구 meeting row에 실패 상태와 에러 메시지를 저장합니다."""
     with get_db_connection() as connection:
-        connection.execute(
+        cursor = connection.execute(
             """
             UPDATE meetings
             SET status = ?, error = ?
@@ -135,6 +143,7 @@ def mark_meeting_failed(job_id: str, error: str) -> None:
             """,
             ("failed", error, job_id),
         )
+        return cursor.rowcount > 0
 
 
 def build_normalized_transcript_from_structured_payload(structured_transcript: dict[str, Any] | None) -> NormalizedTranscript | None:

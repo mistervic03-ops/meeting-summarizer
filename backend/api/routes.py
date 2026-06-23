@@ -100,6 +100,7 @@ def create_transcript_process_job(
         payload.context.strip(),
         structured_transcript,
         payload.meeting_type,
+        meeting_record_id=job.id,
     )
     return JobCreateResponse(job_id=job.id, status=job.status)
 

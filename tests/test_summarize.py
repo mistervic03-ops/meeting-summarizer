@@ -1876,6 +1876,25 @@ terms:
         self.assertIn("<OUTPUT_SCHEMA>", call_kwargs["messages"][0]["content"])
         self.assertIn("JSON object 하나만 반환", call_kwargs["messages"][0]["content"])
 
+    def test_request_claude_structured_structure_ignores_text_after_json_object(self) -> None:
+        """Claude 구조 추출은 JSON 뒤에 붙은 설명문을 무시하고 첫 JSON object만 파싱합니다."""
+        response_json = {
+            "summary_facts": ["핵심 논의"],
+            "decisions": [],
+            "action_items": [],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+        response_text = f"{json.dumps(response_json, ensure_ascii=False)}\n\n추가 설명입니다."
+        fake_response = types.SimpleNamespace(content=[types.SimpleNamespace(text=response_text)])
+        fake_client = types.SimpleNamespace(messages=types.SimpleNamespace(create=Mock(return_value=fake_response)))
+        claude_globals = summarize.request_claude_structured_structure.__globals__
+
+        with patch.dict(claude_globals, {"create_anthropic_client": Mock(return_value=fake_client)}):
+            result = summarize.request_claude_structured_structure("구조 추출 prompt")
+
+        self.assertEqual(result, response_json)
+
     def test_build_claude_json_prompt_uses_compact_schema(self) -> None:
         """Claude 구조 추출 prompt는 같은 schema를 compact JSON으로 포함합니다."""
         from summarization.llm_provider import build_claude_json_prompt
