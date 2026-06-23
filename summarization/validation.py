@@ -217,22 +217,19 @@ def unresolved_owner_keys() -> set[str]:
         "없음",
         "확인필요",
         "unknown",
-        "speakerunknown",
-        "unknownspeaker",
         "저",
         "제가",
         "나",
         "내가",
         "우리",
         "저희",
-        "화자미상",
         "알수없음",
         "미상",
     }
 
 
 def is_resolved_action_owner(owner: Any) -> bool:
-    """speaker label, 사람 이름, 팀 이름처럼 해결된 담당자인지 반환합니다."""
+    """사람 이름이나 팀 이름처럼 해결된 담당자인지 반환합니다."""
     return normalize_warning_text(normalize_action_owner(as_text(owner))) not in unresolved_owner_keys()
 
 
@@ -365,21 +362,17 @@ def find_quote_in_utterances(quote: str, normalized_transcript: NormalizedTransc
 
 
 def normalize_quote_for_matching(quote: str) -> str:
-    """발화 ID나 화자 prefix가 섞인 원문 인용에서 실제 발화 텍스트를 반환합니다."""
+    """발화 ID가 섞인 원문 인용에서 실제 발화 텍스트를 반환합니다."""
     quote_text = as_text(quote)
     if not quote_text:
         return ""
 
     utterance_prefix_match = re.match(
-        r"^\s*\[u_\d{4}\]\s*(?:[^:：\n]{1,80}\s*[:：]\s*)?(?P<text>.+)$",
+        r"^\s*\[u_\d{4}\]\s*(?P<text>.+)$",
         quote_text,
     )
     if utterance_prefix_match:
         return utterance_prefix_match.group("text").strip()
-
-    speaker_prefix_match = re.match(r"^\s*[^:：\n]{1,80}\s*[:：]\s*(?P<text>.+)$", quote_text)
-    if speaker_prefix_match:
-        return speaker_prefix_match.group("text").strip()
 
     return quote_text
 

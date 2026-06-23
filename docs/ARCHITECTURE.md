@@ -11,7 +11,7 @@ This document describes the current repository structure and production data flo
 - `frontend/`: React + TypeScript + Vite application served by nginx in Docker production builds.
 - `frontend/src/`: Upload, transcript review, result, history UI, API client helpers, components, and export utilities.
 - `summarization/`: Meeting-minutes engine for transcript normalization, profiling, extraction, validation, rendering, policies, glossary, and LLM provider selection.
-- `tests/`: Unit tests for backend structured transcript handling, chunking, summarization, transcription helpers, CLI behavior, and utilities.
+- `tests/`: Unit tests for backend plain transcript handling, chunking, summarization, transcription helpers, CLI behavior, and utilities.
 - `config/`: STT vocabulary and summary glossary configuration files.
 - `docs/`: Architecture, deployment, summarization, and dead-code documentation.
 - `tools/`: Operational or evaluation helpers, including Whisper evaluation scripts.
@@ -54,7 +54,7 @@ This document describes the current repository structure and production data flo
 - STT output is saved by `backend/services/pipeline.py:run_transcription_pipeline()` through `backend/storage.py:mark_job_transcribed()`.
 - The frontend polls `GET /api/jobs/{job_id}` and then fetches `GET /api/jobs/{job_id}/transcript`.
 - Review UI entry: `frontend/src/pages/TranscriptPage.tsx`.
-- Optional speaker-name edits are applied client-side before submitting the reviewed transcript.
+- The reviewed transcript is submitted as plain text.
 
 ### 4. Summarization Job
 
@@ -62,7 +62,6 @@ This document describes the current repository structure and production data flo
 - Backend route: `backend/api/routes.py:create_transcript_process_job()`.
 - Reviewed transcripts can include `transcription_job_id` so the generated minutes job updates the original STT meeting history row instead of inserting a duplicate row.
 - Route schedules `backend/services/pipeline.py:run_transcript_summary_pipeline()`.
-- Structured transcript payloads, when present, are converted by `summarization/normalization.py:structured_transcript_payload_to_normalized_transcript()`.
 - The pipeline calls `summarize.py:summarize_transcript()`, which delegates to `summarization/pipeline.py:summarize_transcript()`.
 - Summarization progress is reported through a summary progress callback, then exposed through the same `GET /api/jobs/{job_id}` polling status fields used by the frontend progress panel.
 

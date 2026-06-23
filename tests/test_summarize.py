@@ -112,7 +112,7 @@ class SummarizeTests(unittest.TestCase):
 
     def test_step_c_normalization_and_profiling_are_reexported_from_summarize(self) -> None:
         """Step C로 이동한 normalization/profiling helper는 summarize에서 계속 참조됩니다."""
-        from summarization.normalization import normalize_transcript, preprocess_transcript, structured_transcript_payload_to_normalized_transcript
+        from summarization.normalization import normalize_transcript, preprocess_transcript
         from summarization.profiling import analyze_transcript_profile, choose_processing_strategy
 
         transcript = """
@@ -123,7 +123,6 @@ class SummarizeTests(unittest.TestCase):
 """.strip()
 
         self.assertEqual(summarize.preprocess_transcript.__module__, "summarization.normalization")
-        self.assertEqual(summarize.structured_transcript_payload_to_normalized_transcript.__module__, "summarization.normalization")
         self.assertEqual(summarize.analyze_transcript_profile.__module__, "summarization.profiling")
         summarize_preprocessed = summarize.preprocess_transcript(transcript)
         module_preprocessed = preprocess_transcript(transcript)
@@ -142,7 +141,6 @@ class SummarizeTests(unittest.TestCase):
         module_profile = analyze_transcript_profile(normalize_transcript(transcript))
         self.assertEqual(summarize_profile.char_count, module_profile.char_count)
         self.assertEqual(summarize_profile.utterance_count, module_profile.utterance_count)
-        self.assertEqual(summarize_profile.speaker_count, module_profile.speaker_count)
         self.assertEqual(summarize_profile.action_cue_count, module_profile.action_cue_count)
         self.assertEqual(summarize_profile.decision_cue_count, module_profile.decision_cue_count)
         self.assertEqual(summarize_profile.risk_cue_count, module_profile.risk_cue_count)
@@ -151,14 +149,6 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(
             summarize.choose_processing_strategy(summarize.analyze_transcript_profile(summarize.normalize_transcript(transcript))),
             choose_processing_strategy(analyze_transcript_profile(normalize_transcript(transcript))),
-        )
-        summarize_structured = summarize.structured_transcript_payload_to_normalized_transcript({"utterances": [{"text": "테스트"}]})
-        module_structured = structured_transcript_payload_to_normalized_transcript({"utterances": [{"text": "테스트"}]})
-        self.assertEqual(summarize_structured.text, module_structured.text)
-        self.assertEqual(summarize_structured.meeting_date, module_structured.meeting_date)
-        self.assertEqual(
-            [utterance.render_for_llm() for utterance in summarize_structured.utterances],
-            [utterance.render_for_llm() for utterance in module_structured.utterances],
         )
 
     def test_remaining_modules_are_reexported_from_summarize(self) -> None:
@@ -212,33 +202,34 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(summarize.generate_minutes.__module__, "summarization.pipeline")
         self.assertEqual(pipeline.run_timed_stage("테스트", lambda value: value + 1, 1)[0], 2)
 
-    def test_preprocess_removes_only_standalone_fillers_and_merges_speakers(self) -> None:
-        """단독 추임새만 제거하고 같은 화자의 연속 발언은 병합합니다."""
+    def test_preprocess_removes_only_standalone_fillers(self) -> None:
+        """단독 추임새만 제거하고 plain transcript 줄 구조를 유지합니다."""
         transcript = """
 회의일: 2026년 5월 14일
-김민수: 아
-김민수: 네네 확인했습니다
-김민수: 배포는 금요일까지 진행하겠습니다.
-이서연: 음...
-이서연: 품질 검수를 맡겠습니다.
+아
+네네 확인했습니다
+배포는 금요일까지 진행하겠습니다.
+음...
+품질 검수를 맡겠습니다.
 """.strip()
 
         result = summarize.preprocess_transcript(transcript)
 
         self.assertEqual(result.meeting_date, "2026-05-14")
-        self.assertNotIn("김민수: 아\n", result.text)
-        self.assertIn("김민수: 네네 확인했습니다 배포는 금요일까지 진행하겠습니다.", result.text)
-        self.assertIn("이서연: 품질 검수를 맡겠습니다.", result.text)
+        self.assertNotIn("\n아\n", result.text)
+        self.assertIn("네네 확인했습니다", result.text)
+        self.assertIn("배포는 금요일까지 진행하겠습니다.", result.text)
+        self.assertIn("품질 검수를 맡겠습니다.", result.text)
 
     def test_normalize_transcript_creates_stable_utterance_ids_without_changing_text(self) -> None:
         """normalize_transcript는 stable ID를 만들고 기존 전처리 text와 같은 출력을 유지합니다."""
         transcript = """
 회의일: 2026년 5월 14일
-김민수: 아
-김민수: 네네 확인했습니다
-김민수: 배포는 금요일까지 진행하겠습니다.
-이서연: 음...
-이서연: 품질 검수를 맡겠습니다.
+아
+네네 확인했습니다
+배포는 금요일까지 진행하겠습니다.
+음...
+품질 검수를 맡겠습니다.
 """.strip()
 
         normalized = summarize.normalize_transcript(transcript)
@@ -246,19 +237,18 @@ class SummarizeTests(unittest.TestCase):
 
         self.assertEqual(normalized.text, preprocessed.text)
         self.assertEqual(normalized.meeting_date, "2026-05-14")
-        self.assertEqual([utterance.utterance_id for utterance in normalized.utterances], ["u_0001", "u_0002", "u_0003"])
-        self.assertEqual([utterance.index for utterance in normalized.utterances], [0, 1, 2])
-        self.assertEqual(normalized.utterances[1].speaker, "김민수")
-        self.assertEqual(normalized.utterances[1].text, "네네 확인했습니다 배포는 금요일까지 진행하겠습니다.")
-        self.assertIn("김민수: 네네 확인했습니다", normalized.utterances[1].raw_line)
-        self.assertIn("김민수: 배포는 금요일까지 진행하겠습니다.", normalized.utterances[1].raw_line)
+        self.assertEqual([utterance.utterance_id for utterance in normalized.utterances], ["u_0001", "u_0002", "u_0003", "u_0004"])
+        self.assertEqual([utterance.index for utterance in normalized.utterances], [0, 1, 2, 3])
+        self.assertEqual(normalized.utterances[1].text, "네네 확인했습니다")
+        self.assertEqual(normalized.utterances[2].text, "배포는 금요일까지 진행하겠습니다.")
+        self.assertEqual(normalized.utterances[1].raw_line, "네네 확인했습니다")
 
-    def test_normalized_transcript_renders_utterance_ids_and_speakers_for_llm(self) -> None:
-        """LLM 입력용 렌더링은 발화 ID와 화자를 함께 보존합니다."""
+    def test_normalized_transcript_renders_utterance_ids_for_llm(self) -> None:
+        """LLM 입력용 렌더링은 발화 ID와 원문 텍스트를 보존합니다."""
         normalized = summarize.normalize_transcript(
             """
-김민수: 오늘 회의는 네 가지 안건입니다.
-이서연: 4월 매출이 전월 대비 증가했습니다.
+오늘 회의는 네 가지 안건입니다.
+4월 매출이 전월 대비 증가했습니다.
 """.strip()
         )
 
@@ -266,8 +256,8 @@ class SummarizeTests(unittest.TestCase):
             normalized.render_for_llm(),
             "\n".join(
                 [
-                    "[u_0001] 김민수: 오늘 회의는 네 가지 안건입니다.",
-                    "[u_0002] 이서연: 4월 매출이 전월 대비 증가했습니다.",
+                    "[u_0001] 오늘 회의는 네 가지 안건입니다.",
+                    "[u_0002] 4월 매출이 전월 대비 증가했습니다.",
                 ]
             ),
         )
@@ -290,14 +280,12 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(normalized.utterances[0].text, first_sentence + second_sentence)
         self.assertEqual(normalized.utterances[1].text, third_sentence)
         self.assertTrue(all(len(utterance.text) <= 500 for utterance in normalized.utterances))
-        self.assertEqual([utterance.speaker for utterance in normalized.utterances], [None, None])
 
     def test_normalize_transcript_hard_splits_long_speakerless_lines_without_sentence_boundary(self) -> None:
         """sentence boundary가 없으면 500자 단위로 hard split합니다."""
         normalized = summarize.normalize_transcript("가" * 650)
 
         self.assertEqual([len(utterance.text) for utterance in normalized.utterances], [500, 150])
-        self.assertEqual([utterance.speaker for utterance in normalized.utterances], [None, None])
 
     def test_normalize_transcript_treats_common_colon_headings_as_plain_text(self) -> None:
         """plain transcript의 일반 heading/key label은 speaker로 보지 않습니다."""
@@ -318,12 +306,11 @@ class SummarizeTests(unittest.TestCase):
                 normalized = summarize.normalize_transcript(line)
 
                 self.assertEqual(len(normalized.utterances), 1)
-                self.assertIsNone(normalized.utterances[0].speaker)
                 self.assertEqual(normalized.utterances[0].text, line)
                 self.assertEqual(normalized.text, line)
 
-    def test_normalize_transcript_plain_heading_does_not_create_speaker_continuation(self) -> None:
-        """denylist heading 다음 plain 줄은 fake speaker의 continuation이 되지 않습니다."""
+    def test_normalize_transcript_colon_lines_do_not_create_continuation(self) -> None:
+        """colon이 들어간 plain 줄도 continuation 없이 독립 발화로 유지됩니다."""
         transcript = """
 회의 목적: KT와 향후 협력 방향 논의
 추가 논의 범위를 확인합니다.
@@ -332,10 +319,9 @@ class SummarizeTests(unittest.TestCase):
 
         normalized = summarize.normalize_transcript(transcript)
 
-        self.assertEqual([utterance.speaker for utterance in normalized.utterances], [None, None, "김민수"])
         self.assertEqual(normalized.utterances[0].text, "회의 목적: KT와 향후 협력 방향 논의")
         self.assertEqual(normalized.utterances[1].text, "추가 논의 범위를 확인합니다.")
-        self.assertEqual(normalized.utterances[2].text, "배포 확인")
+        self.assertEqual(normalized.utterances[2].text, "김민수: 배포 확인")
         self.assertEqual(
             normalized.render_for_llm(),
             "\n".join(
@@ -347,86 +333,8 @@ class SummarizeTests(unittest.TestCase):
             ),
         )
 
-    def test_normalize_transcript_preserves_real_speaker_labels_after_heading_denylist(self) -> None:
-        """실제 speaker label은 plain heading denylist와 별개로 계속 보존합니다."""
-        transcript = """
-Speaker 1: 배포 확인
-[Speaker 1]: 추가 확인
-김민수: 품질 검수
-영업담당자: 고객 공유
-""".strip()
-
-        normalized = summarize.normalize_transcript(transcript)
-
-        self.assertEqual(
-            [utterance.speaker for utterance in normalized.utterances],
-            ["Speaker 1", "김민수", "영업담당자"],
-        )
-        self.assertEqual(normalized.utterances[0].text, "배포 확인 추가 확인")
-        self.assertEqual(normalized.utterances[1].text, "품질 검수")
-        self.assertEqual(normalized.utterances[2].text, "고객 공유")
-
-    def test_is_plain_heading_label_matches_narrow_denylist(self) -> None:
-        """heading denylist는 공백과 대소문자를 정규화하되 실제 speaker label은 제외합니다."""
-        from summarization.normalization import is_plain_heading_label
-
-        self.assertTrue(is_plain_heading_label("회의 목적"))
-        self.assertTrue(is_plain_heading_label("회의목적"))
-        self.assertTrue(is_plain_heading_label("To Do"))
-        self.assertTrue(is_plain_heading_label("API"))
-        self.assertFalse(is_plain_heading_label("Speaker 1"))
-        self.assertFalse(is_plain_heading_label("김민수"))
-        self.assertFalse(is_plain_heading_label("영업담당자"))
-
-    def test_structured_transcript_payload_to_normalized_transcript_preserves_metadata(self) -> None:
-        """structured transcript payload는 발화 ID, 화자, timestamp를 보존합니다."""
-        normalized = summarize.structured_transcript_payload_to_normalized_transcript(
-            {
-                "utterances": [
-                    {
-                        "utterance_id": "u_0042",
-                        "speaker": "영업담당자",
-                        "text": "제가 고객사 통화 결과를 공유하겠습니다.",
-                        "start_ms": 1200,
-                        "end_ms": 4500,
-                    }
-                ]
-            }
-        )
-
-        self.assertEqual(normalized.utterances[0].utterance_id, "u_0042")
-        self.assertEqual(normalized.utterances[0].speaker, "영업담당자")
-        self.assertEqual(normalized.utterances[0].start_ms, 1200)
-        self.assertEqual(normalized.utterances[0].end_ms, 4500)
-        self.assertEqual(normalized.text, "영업담당자: 제가 고객사 통화 결과를 공유하겠습니다.")
-        self.assertEqual(normalized.render_for_llm(), "[u_0042] 영업담당자: 제가 고객사 통화 결과를 공유하겠습니다.")
-
-    def test_structured_transcript_payload_to_normalized_transcript_fills_defaults_and_skips_empty_text(self) -> None:
-        """structured payload에서 비어 있는 발화는 제외하고 누락된 ID와 화자는 기본값을 씁니다."""
-        normalized = summarize.structured_transcript_payload_to_normalized_transcript(
-            {
-                "utterances": [
-                    {"speaker": "Speaker 1", "text": "   "},
-                    {"text": "오늘 회의는 네 가지 안건입니다."},
-                    {"speaker": "", "text": "후속 작업은 정리해서 공유하겠습니다."},
-                ]
-            }
-        )
-
-        self.assertEqual([utterance.utterance_id for utterance in normalized.utterances], ["u_0001", "u_0002"])
-        self.assertEqual([utterance.speaker for utterance in normalized.utterances], ["Unknown", "Unknown"])
-        self.assertEqual(
-            normalized.render_for_llm(),
-            "\n".join(
-                [
-                    "[u_0001] Unknown: 오늘 회의는 네 가지 안건입니다.",
-                    "[u_0002] Unknown: 후속 작업은 정리해서 공유하겠습니다.",
-                ]
-            ),
-        )
-
-    def test_normalize_transcript_preserves_speakerless_line_handling(self) -> None:
-        """speaker 없는 줄은 기존 전처리와 같은 방식으로 유지하거나 직전 발화에 붙입니다."""
+    def test_normalize_transcript_preserves_plain_line_handling(self) -> None:
+        """plain 줄은 기존 순서대로 독립 발화로 유지합니다."""
         transcript = """
 회의 목적 공유
 김민수: 첫 발언입니다.
@@ -440,11 +348,10 @@ Speaker 1: 배포 확인
         self.assertEqual(normalized.text, preprocessed.text)
         self.assertEqual(
             normalized.text,
-            "회의 목적 공유\n김민수: 첫 발언입니다. 추가 설명입니다.\n이서연: 확인했습니다.",
+            "회의 목적 공유\n김민수: 첫 발언입니다.\n추가 설명입니다.\n이서연: 확인했습니다.",
         )
-        self.assertIsNone(normalized.utterances[0].speaker)
-        self.assertEqual(normalized.utterances[1].speaker, "김민수")
-        self.assertIn("추가 설명입니다.", normalized.utterances[1].raw_line)
+        self.assertEqual(normalized.utterances[1].text, "김민수: 첫 발언입니다.")
+        self.assertEqual(normalized.utterances[2].text, "추가 설명입니다.")
 
     def test_segment_transcript_returns_single_chunk_for_short_transcript(self) -> None:
         """짧은 transcript는 speaker 없는 발화까지 포함한 단일 chunk로 유지합니다."""
@@ -938,8 +845,8 @@ Speaker 1: 배포 확인
         executor_mock.assert_not_called()
         validate_mock.assert_not_called()
 
-    def test_analyze_transcript_profile_counts_speakers_and_cues(self) -> None:
-        """transcript profile은 speaker 수와 보수적 cue count를 계산합니다."""
+    def test_analyze_transcript_profile_counts_size_and_cues(self) -> None:
+        """transcript profile은 발화 수와 보수적 cue count를 계산합니다."""
         transcript = """
 김민수: 배포 확인은 제가 금요일까지 하겠습니다.
 이서연: 방식은 FastAPI로 확정했고 이걸로 진행하기로 했습니다.
@@ -950,7 +857,6 @@ Speaker 1: 배포 확인
         profile = summarize.analyze_transcript_profile(summarize.normalize_transcript(transcript))
 
         self.assertEqual(profile.utterance_count, 4)
-        self.assertEqual(profile.speaker_count, 4)
         self.assertEqual(profile.action_cue_count, 3)
         self.assertEqual(profile.decision_cue_count, 3)
         self.assertEqual(profile.risk_cue_count, 3)
@@ -1011,7 +917,6 @@ Speaker 1: 배포 확인
         profile = summarize.TranscriptProfile(
             char_count=10,
             utterance_count=1,
-            speaker_count=0,
             action_cue_count=0,
             decision_cue_count=0,
             risk_cue_count=0,
@@ -1072,7 +977,6 @@ Speaker 1: 배포 확인
         profile = summarize.TranscriptProfile(
             char_count=10,
             utterance_count=1,
-            speaker_count=0,
             action_cue_count=0,
             decision_cue_count=0,
             risk_cue_count=0,
@@ -1105,20 +1009,18 @@ Speaker 1: 배포 확인
             utterances=[
                 summarize.TranscriptUtterance(
                     utterance_id="u_0099",
-                    speaker="Speaker 2",
                     text="제가 고객사 통화 결과를 공유하겠습니다.",
                     index=0,
-                    raw_line="Speaker 2: 제가 고객사 통화 결과를 공유하겠습니다.",
+                    raw_line="제가 고객사 통화 결과를 공유하겠습니다.",
                 )
             ],
-            text="Speaker 2: 제가 고객사 통화 결과를 공유하겠습니다.",
+            text="제가 고객사 통화 결과를 공유하겠습니다.",
             meeting_date="2026-05-14",
         )
         structure = empty_track_b_structure()
         profile = summarize.TranscriptProfile(
             char_count=30,
             utterance_count=1,
-            speaker_count=1,
             action_cue_count=1,
             decision_cue_count=0,
             risk_cue_count=0,
@@ -1145,7 +1047,7 @@ Speaker 1: 배포 확인
         preprocess_mock.assert_not_called()
         normalize_mock.assert_not_called()
         extract_mock.assert_called_once_with(
-            "[u_0099] Speaker 2: 제가 고객사 통화 결과를 공유하겠습니다.",
+            "[u_0099] 제가 고객사 통화 결과를 공유하겠습니다.",
             "2026-05-14",
             "",
             "general",
@@ -1164,7 +1066,6 @@ Speaker 1: 배포 확인
         profile = summarize.TranscriptProfile(
             char_count=9000,
             utterance_count=80,
-            speaker_count=2,
             action_cue_count=0,
             decision_cue_count=0,
             risk_cue_count=0,
@@ -1207,7 +1108,6 @@ Speaker 1: 배포 확인
         profile = summarize.TranscriptProfile(
             char_count=9000,
             utterance_count=80,
-            speaker_count=2,
             action_cue_count=0,
             decision_cue_count=0,
             risk_cue_count=0,
@@ -1294,7 +1194,6 @@ Speaker 1: 배포 확인
         profile = summarize.TranscriptProfile(
             char_count=9000,
             utterance_count=80,
-            speaker_count=2,
             action_cue_count=0,
             decision_cue_count=0,
             risk_cue_count=0,
@@ -1338,7 +1237,6 @@ Speaker 1: 배포 확인
         profile = summarize.TranscriptProfile(
             char_count=40000,
             utterance_count=240,
-            speaker_count=4,
             action_cue_count=0,
             decision_cue_count=0,
             risk_cue_count=0,
@@ -1612,7 +1510,6 @@ Speaker 1: 배포 확인
         self.assertIn("DWH 적재 로그 확인", prompt)
         self.assertIn("source_quote는 \"미정\"이 아니라 빈 문자열", prompt)
         self.assertIn("삭제하지 말고 confidence를 low", prompt)
-        self.assertIn("speaker label이 없는 plain STT 발화에서는 speaker label로 owner를 추론하지 마세요", prompt)
         self.assertIn("발화 텍스트 안에 명시된 사람/팀 이름만 owner로 사용", prompt)
         self.assertIn("이름 근거가 없으면 owner는 \"미정\"", prompt)
         self.assertIn("owner가 실제로 \"미정\"일 때만 담당자 확인 warning", prompt)
@@ -1625,9 +1522,8 @@ Speaker 1: 배포 확인
         self.assertIn("주요 발언/논의 포인트", prompt)
         self.assertIn("speaker_highlights에는 주요 발언 또는 논의 포인트", prompt)
         self.assertIn("summary_facts에 넣기에는 세부적인 기술 설명, 고객 관심사, 열린 질문, 리스크, 예시, 수치, follow-up 후보", prompt)
-        self.assertIn("신뢰할 수 있는 화자명이 있을 때만 화자별 하이라이트", prompt)
-        self.assertIn("speaker label이 없으면 화자를 만들지 말고", prompt)
-        self.assertIn("plain transcript에서는 speaker_highlights를 화자별 발언이 아니라 주요 논의/source highlight", prompt)
+        self.assertIn("speaker_highlights는 화자별 발언이 아니라 주요 논의/source highlight", prompt)
+        self.assertIn("transcript에 없는 화자나 참석자 이름을 만들지 말고", prompt)
         self.assertIn("speaker_highlights만으로 새로운 사실, 결정, action_item을 만들지 마세요", prompt)
 
     def test_build_extraction_prompt_includes_meeting_type_policy(self) -> None:
@@ -2122,8 +2018,8 @@ terms:
         """source_quote가 발화 text에 exact match되면 해당 utterance_id를 반환합니다."""
         normalized = summarize.normalize_transcript(
             """
-Speaker 1: 오늘 회의는 네 가지 안건입니다.
-Speaker 2: 배포 확인은 제가 진행하겠습니다.
+오늘 회의는 네 가지 안건입니다.
+배포 확인은 제가 진행하겠습니다.
 """.strip()
         )
 
@@ -2131,38 +2027,42 @@ Speaker 2: 배포 확인은 제가 진행하겠습니다.
 
     def test_find_quote_in_utterances_matches_whitespace_normalized_quote(self) -> None:
         """공백 차이가 있어도 source_quote가 포함된 발화를 찾습니다."""
-        normalized = summarize.normalize_transcript("Speaker 1: 배포 확인은 제가 진행하겠습니다.")
+        normalized = summarize.normalize_transcript("배포 확인은 제가 진행하겠습니다.")
 
         self.assertEqual(summarize.find_quote_in_utterances("배포   확인은 제가 진행하겠습니다.", normalized), ["u_0001"])
 
-    def test_find_quote_in_utterances_strips_utterance_and_speaker_prefix(self) -> None:
-        """quote에 발화 ID와 speaker prefix가 섞여도 실제 발화 텍스트로 매칭합니다."""
+    def test_find_quote_in_utterances_strips_utterance_id_only(self) -> None:
+        """quote에 발화 ID가 섞여도 실제 발화 텍스트로 매칭합니다."""
         normalized = summarize.normalize_transcript("영업담당자: 제가 고객 공유를 진행하겠습니다.")
 
         self.assertEqual(
             summarize.find_quote_in_utterances("[u_0001] 영업담당자: 제가 고객 공유를 진행하겠습니다.", normalized),
             ["u_0001"],
         )
+        self.assertEqual(
+            summarize.normalize_quote_for_matching("영업담당자: 제가 고객 공유를 진행하겠습니다."),
+            "영업담당자: 제가 고객 공유를 진행하겠습니다.",
+        )
 
     def test_find_quote_in_utterances_returns_empty_list_when_missing(self) -> None:
         """source_quote가 어떤 발화에도 없으면 빈 목록을 반환합니다."""
-        normalized = summarize.normalize_transcript("Speaker 1: 배포 확인은 제가 진행하겠습니다.")
+        normalized = summarize.normalize_transcript("배포 확인은 제가 진행하겠습니다.")
 
         self.assertEqual(summarize.find_quote_in_utterances("원문에 없는 문장입니다.", normalized), [])
 
     def test_validate_structure_can_use_normalized_transcript_for_source_quote(self) -> None:
         """선택적으로 받은 normalized transcript에서 quote를 찾으면 원문 근거 warning을 만들지 않습니다."""
-        normalized = summarize.normalize_transcript("Speaker 2: 배포 확인은 제가 진행하겠습니다.")
+        normalized = summarize.normalize_transcript("김민수: 배포 확인은 제가 진행하겠습니다.")
         structure = {
             "summary_facts": [],
             "decisions": [],
             "action_items": [
                 {
                     "task": "배포 확인",
-                    "owner": "Speaker 2",
+                    "owner": "김민수",
                     "due_date": "2026-05-20",
                     "confidence": "high",
-                    "source_quote": "[u_0001] Speaker 2: 배포 확인은 제가 진행하겠습니다.",
+                    "source_quote": "[u_0001] 김민수: 배포 확인은 제가 진행하겠습니다.",
                 }
             ],
             "speaker_highlights": [],
@@ -2232,8 +2132,8 @@ Speaker 2: 배포 확인은 제가 진행하겠습니다.
         """잘못된 source_utterance_ids가 있어도 검증은 실패하지 않고 기존 warning 흐름을 사용합니다."""
         normalized = summarize.normalize_transcript(
             """
-Speaker 1: 배포 확인은 제가 진행하겠습니다.
-Speaker 2: 자료 정리는 제가 진행하겠습니다.
+김민수: 배포 확인은 제가 진행하겠습니다.
+이서연: 자료 정리는 제가 진행하겠습니다.
 """.strip()
         )
         structure = {
@@ -2249,7 +2149,7 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
             "action_items": [
                 {
                     "task": "배포 확인",
-                    "owner": "Speaker 1",
+                    "owner": "김민수",
                     "due_date": "2026-05-20",
                     "confidence": "high",
                     "source_quote": "배포 확인은 제가 진행하겠습니다.",
@@ -2325,25 +2225,25 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertIn("배포 확인: 원문 근거 확인 필요", result["warnings"])
         self.assertIn("Streamlit 기반 진행: 원문 근거 확인 필요", result["warnings"])
 
-    def test_validate_structure_keeps_speaker_label_owner_without_owner_warning(self) -> None:
-        """speaker label owner는 담당자 미정으로 보지 않습니다."""
+    def test_validate_structure_keeps_named_owner_without_owner_warning(self) -> None:
+        """명시된 사람/팀 owner는 담당자 미정으로 보지 않습니다."""
         structure = {
             "summary_facts": [],
             "decisions": [],
             "action_items": [
                 {
                     "task": "배포 확인",
-                    "owner": "Speaker 2",
+                    "owner": "김민수",
                     "due_date": "2026-05-20",
                     "confidence": "high",
-                    "source_quote": "제가 배포 확인을 2026-05-20까지 하겠습니다.",
+                    "source_quote": "김민수가 배포 확인을 2026-05-20까지 하겠습니다.",
                 },
                 {
                     "task": "고객 공유",
-                    "owner": "영업담당자",
+                    "owner": "영업팀",
                     "due_date": "2026-05-22",
                     "confidence": "high",
-                    "source_quote": "제가 고객 공유를 2026-05-22까지 하겠습니다.",
+                    "source_quote": "영업팀이 고객 공유를 2026-05-22까지 하겠습니다.",
                 },
             ],
             "speaker_highlights": [],
@@ -2351,25 +2251,25 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         }
         transcript = "\n".join(
             [
-                "[u_0001] Speaker 2: 제가 배포 확인을 2026-05-20까지 하겠습니다.",
-                "[u_0002] 영업담당자: 제가 고객 공유를 2026-05-22까지 하겠습니다.",
+                "[u_0001] 김민수가 배포 확인을 2026-05-20까지 하겠습니다.",
+                "[u_0002] 영업팀이 고객 공유를 2026-05-22까지 하겠습니다.",
             ]
         )
 
         result = summarize.validate_structure(structure, transcript)
 
-        self.assertEqual([item["owner"] for item in result["action_items"]], ["Speaker 2", "영업담당자"])
+        self.assertEqual([item["owner"] for item in result["action_items"]], ["김민수", "영업팀"])
         self.assertFalse(any("담당자 확인 필요" in warning for warning in result["warnings"]))
         self.assertFalse(any("담당자 확인이 필요한 액션 아이템" in warning for warning in result["warnings"]))
 
-    def test_validate_structure_treats_unknown_speaker_owners_as_unresolved(self) -> None:
+    def test_validate_structure_treats_unknown_owners_as_unresolved(self) -> None:
         """Unknown 계열 owner는 plain transcript에서 실제 담당자로 보지 않습니다."""
         transcript = "\n".join(
             [
                 "제가 자료 정리를 2026-05-21까지 하겠습니다.",
                 "제가 로그 확인을 2026-05-22까지 하겠습니다.",
                 "제가 고객 공유를 2026-05-23까지 하겠습니다.",
-                "Speaker 1: 제가 배포 확인을 2026-05-24까지 하겠습니다.",
+                "김민수가 배포 확인을 2026-05-24까지 하겠습니다.",
             ]
         )
         structure = {
@@ -2384,25 +2284,18 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
                     "source_quote": "제가 자료 정리를 2026-05-21까지 하겠습니다.",
                 },
                 {
-                    "task": "로그 확인",
-                    "owner": "Speaker Unknown",
-                    "due_date": "2026-05-22",
-                    "confidence": "high",
-                    "source_quote": "제가 로그 확인을 2026-05-22까지 하겠습니다.",
-                },
-                {
                     "task": "고객 공유",
-                    "owner": "화자 미상",
+                    "owner": "미상",
                     "due_date": "2026-05-23",
                     "confidence": "high",
                     "source_quote": "제가 고객 공유를 2026-05-23까지 하겠습니다.",
                 },
                 {
                     "task": "배포 확인",
-                    "owner": "Speaker 1",
+                    "owner": "김민수",
                     "due_date": "2026-05-24",
                     "confidence": "high",
-                    "source_quote": "제가 배포 확인을 2026-05-24까지 하겠습니다.",
+                    "source_quote": "김민수가 배포 확인을 2026-05-24까지 하겠습니다.",
                 },
             ],
             "speaker_highlights": [],
@@ -2413,10 +2306,9 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
 
         self.assertEqual(
             [item["owner"] for item in result["action_items"]],
-            ["미정", "미정", "미정", "Speaker 1"],
+            ["미정", "미정", "김민수"],
         )
         self.assertIn("자료 정리: 담당자 확인 필요", result["warnings"])
-        self.assertIn("로그 확인: 담당자 확인 필요", result["warnings"])
         self.assertIn("고객 공유: 담당자 확인 필요", result["warnings"])
         self.assertFalse(any("배포 확인: 담당자 확인 필요" == warning for warning in result["warnings"]))
 
@@ -2426,11 +2318,6 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
             "Unknown",
             "unknown",
             "UNKNOWN",
-            "Speaker Unknown",
-            "speaker unknown",
-            "Unknown Speaker",
-            "unknown speaker",
-            "화자 미상",
             "알 수 없음",
             "미상",
         ]
@@ -2439,7 +2326,7 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
             with self.subTest(owner=owner):
                 self.assertEqual(summarize.normalize_action_owner(owner), "미정")
 
-        self.assertEqual(summarize.normalize_action_owner("Speaker 1"), "Speaker 1")
+        self.assertEqual(summarize.normalize_action_owner("김민수"), "김민수")
 
     def test_validate_structure_warns_only_when_owner_is_unknown_marker(self) -> None:
         """owner가 미정이면 기존 담당자 확인 warning은 유지합니다."""
@@ -2463,8 +2350,8 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
 
         self.assertIn("배포 확인: 담당자 확인 필요", result["warnings"])
 
-    def test_validate_structure_removes_stale_owner_warning_for_resolved_speaker_owner(self) -> None:
-        """resolved speaker owner를 가리키는 오래된 담당자 warning은 제거합니다."""
+    def test_validate_structure_removes_stale_owner_warning_for_resolved_owner(self) -> None:
+        """resolved owner를 가리키는 오래된 담당자 warning은 제거합니다."""
         structure = {
             "summary_facts": [],
             "decisions": [],
@@ -2493,7 +2380,7 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
             "action_items": [
                 {
                     "task": "배포 확인",
-                    "owner": "Speaker 2",
+                    "owner": "김민수",
                     "due_date": "미정",
                     "confidence": "high",
                     "source_quote": "배포 확인은 제가 하겠습니다.",
@@ -2503,7 +2390,7 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
             "warnings": ["배포 확인: 담당자 확인 필요"],
         }
 
-        result = summarize.validate_structure(structure, "Speaker 2: 배포 확인은 제가 하겠습니다.")
+        result = summarize.validate_structure(structure, "김민수: 배포 확인은 제가 하겠습니다.")
 
         self.assertNotIn("배포 확인: 담당자 확인 필요", result["warnings"])
         self.assertIn("배포 확인: 기한 확인 필요", result["warnings"])
@@ -2526,7 +2413,7 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
             "warnings": ["배포 확인: 담당자 확인 필요"],
         }
 
-        result = summarize.validate_structure(structure, "Speaker 2: 배포 확인은 저희가 하겠습니다.")
+        result = summarize.validate_structure(structure, "배포 확인은 저희가 하겠습니다.")
 
         self.assertIn("배포 확인: 담당자 확인 필요", result["warnings"])
 
@@ -3312,7 +3199,7 @@ ___
             "decisions": [],
             "action_items": [
                 {"task": "배포 확인", "owner": "저", "due_date": "미정", "confidence": "low"},
-                {"task": "샘플 검수", "owner": "Speaker 1", "due_date": "2026-05-20", "confidence": "high"},
+                {"task": "샘플 검수", "owner": "김민수", "due_date": "2026-05-20", "confidence": "high"},
             ],
             "speaker_highlights": [],
             "warnings": [],
@@ -3322,7 +3209,7 @@ ___
 
         self.assertEqual(result["action_items"][0]["owner"], "미정")
         self.assertEqual(result["action_items"][0]["due_date"], "미정")
-        self.assertEqual(result["action_items"][1]["owner"], "Speaker 1")
+        self.assertEqual(result["action_items"][1]["owner"], "김민수")
         self.assertEqual(result["action_items"][1]["due_date"], "2026-05-20")
 
     def test_render_output_separates_discussion_notes_for_technical_review(self) -> None:

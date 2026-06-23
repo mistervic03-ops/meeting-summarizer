@@ -85,7 +85,6 @@ def create_transcript_process_job(
         raise HTTPException(status_code=400, detail="회의록을 생성할 transcript가 비어 있습니다.")
 
     session_id = get_or_create_session(request, response)
-    structured_transcript = dump_structured_transcript(payload.structured_transcript)
     linked_title = get_meeting_title(payload.transcription_job_id, session_id) if payload.transcription_job_id else None
     job = create_job(filename=linked_title or payload.filename or "transcript.txt")
     linked_to_transcription = False
@@ -98,7 +97,6 @@ def create_transcript_process_job(
         job.id,
         transcript,
         payload.context.strip(),
-        structured_transcript,
         payload.meeting_type,
         meeting_record_id=job.id,
     )
@@ -175,21 +173,7 @@ def get_transcription_result(job_id: str) -> TranscriptResultResponse:
         transcript=job.result.transcript,
         context=job.context,
         stt_seconds=job.stt_seconds,
-        structured_transcript=job.result.structured_transcript,
     )
-
-
-def dump_structured_transcript(structured_transcript: object) -> dict | None:
-    """Pydantic 버전에 맞춰 structured transcript를 저장 가능한 dict로 변환합니다."""
-    if structured_transcript is None:
-        return None
-    model_dump = getattr(structured_transcript, "model_dump", None)
-    if callable(model_dump):
-        return model_dump()
-    dict_dump = getattr(structured_transcript, "dict", None)
-    if callable(dict_dump):
-        return dict_dump()
-    return None
 
 
 def create_meeting_record(job_id: str, session_id: str, title: str, status: str) -> None:

@@ -69,7 +69,6 @@ class TranscriptChunkingFixtureTests(unittest.TestCase):
         profile = analyze_transcript_profile(normalize_fixture("long_action_heavy_meeting.txt"))
 
         self.assertEqual(profile.utterance_count, 207)
-        self.assertEqual(profile.speaker_count, 6)
         self.assertEqual(choose_processing_strategy(profile), "deep")
 
     def test_extract_structure_by_chunks_extracts_each_chunk_and_merges_without_validation(self) -> None:

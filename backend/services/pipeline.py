@@ -8,8 +8,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from summarize import summarize_transcript
-from summarization.models import NormalizedTranscript
-from summarization.normalization import structured_transcript_payload_to_normalized_transcript
 from transcribe import TRANSCRIBE_RUNTIME_VERSION, get_trace_prefix, transcribe_audio
 
 logger = logging.getLogger("backend.pipeline")
@@ -75,7 +73,6 @@ def run_transcript_summary_pipeline(
     job_id: str,
     transcript: str,
     context: str = "",
-    structured_transcript: dict[str, Any] | None = None,
     meeting_type: str = "general",
     meeting_record_id: str | None = None,
 ) -> None:
@@ -88,25 +85,15 @@ def run_transcript_summary_pipeline(
         mark_job_progress(job_id, 15, "검토 완료", "수정된 transcript를 회의록 생성 기준으로 사용합니다.")
         summary_started_at = time.perf_counter()
         summary_progress_callback = build_summary_progress_callback(job_id)
-        normalized_transcript = build_normalized_transcript_from_structured_payload(structured_transcript)
-        if normalized_transcript is None:
-            summary = summarize_transcript(
-                transcript,
-                context=context,
-                meeting_type=meeting_type,
-                progress_callback=summary_progress_callback,
-            )
-        else:
-            summary = summarize_transcript(
-                transcript,
-                context=context,
-                normalized_transcript=normalized_transcript,
-                meeting_type=meeting_type,
-                progress_callback=summary_progress_callback,
-            )
+        summary = summarize_transcript(
+            transcript,
+            context=context,
+            meeting_type=meeting_type,
+            progress_callback=summary_progress_callback,
+        )
         summary_seconds = time.perf_counter() - summary_started_at
         mark_job_progress(job_id, 95, "결과 정리", "결과를 정리하는 중입니다.", summary_seconds=summary_seconds)
-        mark_job_completed(job_id, transcript=transcript, summary=summary, structured_transcript=structured_transcript)
+        mark_job_completed(job_id, transcript=transcript, summary=summary)
         transcript_path, summary_path = save_text_artifacts(job_id, transcript, get_summary_text(summary))
         update_meeting_artifacts(target_meeting_id, "completed", transcript_path, summary_path)
     except Exception as exc:
@@ -151,17 +138,6 @@ def mark_meeting_failed(job_id: str, error: str) -> bool:
             ("failed", error, job_id),
         )
         return cursor.rowcount > 0
-
-
-def build_normalized_transcript_from_structured_payload(structured_transcript: dict[str, Any] | None) -> NormalizedTranscript | None:
-    """structured transcript payload가 유효하면 내부 NormalizedTranscript로 변환합니다."""
-    if not structured_transcript:
-        return None
-
-    try:
-        return structured_transcript_payload_to_normalized_transcript(structured_transcript)
-    except ValueError:
-        return None
 
 
 def build_chunk_progress_callback(job_id: str) -> Callable[[int, int], None]:

@@ -47,6 +47,37 @@ Notes:
 - Internal environment-driven diarized mode has been removed from the backend pipeline.
 - `transcribe.py` is now plain-only for transcription request construction and chunk retry handling.
 
+## Structured Transcript Speaker Payload
+
+Status: removed from the backend and summarization pipeline; stale frontend-only review code remains inactive.
+
+Why inactive:
+
+- The active backend STT path stores and returns only plain transcript strings.
+- `POST /api/transcript-jobs` no longer accepts a `structured_transcript` payload.
+- `summarization/normalization.py` no longer parses, stores, merges, or renders speaker fields.
+- `summarization/profiling.py` no longer computes `speaker_count`.
+- `backend/services/pipeline.py:run_transcript_summary_pipeline()` always calls summarization with the plain reviewed transcript.
+
+Removed locations:
+
+- `summarization/models.py:TranscriptUtterance.speaker`.
+- `summarization/models.py:TranscriptProfile.speaker_count`.
+- `summarization/normalization.py:SPEAKER_LINE_PATTERN`, `PLAIN_HEADING_LABEL_KEYS`, and `is_plain_heading_label()`.
+- `summarization/normalization.py:structured_transcript_payload_to_normalized_transcript()`.
+- `backend/schemas.py:TranscriptUtterancePayload` and `StructuredTranscriptPayload`.
+- `backend/schemas.py:TranscriptJobRequest.structured_transcript`.
+- `backend/schemas.py:TranscriptResultResponse.structured_transcript`.
+- `backend/api/routes.py:dump_structured_transcript()`.
+- `backend/services/pipeline.py:build_normalized_transcript_from_structured_payload()`.
+- `backend/storage.py:PipelineResult.structured_transcript`.
+
+Inactive remnants:
+
+- `frontend/src/pages/TranscriptPage.tsx` still contains structured transcript speaker rename helpers.
+- `frontend/src/api/types.ts` and `frontend/src/hooks/useMeetingJob.ts` still model optional `structured_transcript` fields.
+- These frontend branches are not active with the current backend because the backend no longer emits or accepts structured transcript payloads.
+
 ## `/jobs` One-Shot Endpoint
 
 Status: removed from the frontend and backend API layer.

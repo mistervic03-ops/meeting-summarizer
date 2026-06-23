@@ -81,23 +81,22 @@ preprocess_transcript
 
 - removes only standalone filler tokens
 - preserves meaningful context
-- merges consecutive utterances from the same speaker
 - extracts meeting date information
 
 `normalize_transcript()`:
 
 - creates stable utterance records
 - assigns `utterance_id`
-- preserves speaker labels when present
-- preserves speakerless plain transcript lines as line-level utterances
-- splits speakerless plain transcript lines longer than 500 characters into sentence-boundary windows
-- renders speakerless utterances as `[utterance_id] text` without a synthetic speaker label
+- treats every non-empty transcript line as plain text
+- splits plain transcript lines longer than 500 characters into sentence-boundary windows
+- renders every utterance as `[utterance_id] text`
+- does not parse, store, merge, or synthesize speaker labels
 
 ### 2. Profile and Strategy Selection
 
-`analyze_transcript_profile()` measures transcript complexity, including utterance count, speaker count, and cue counts.
+`analyze_transcript_profile()` measures transcript complexity, including utterance count and cue counts.
 
-`choose_processing_strategy()` is calibrated for plain STT and selects strategy from transcript length and absolute cue count rather than speaker count or utterance count.
+`choose_processing_strategy()` is calibrated for plain STT and selects strategy from transcript length and absolute cue count rather than speaker or utterance structure.
 
 `choose_processing_strategy()` selects:
 
@@ -123,7 +122,7 @@ The model-facing schema returns:
 - `speaker_highlights`
 - `warnings`
 
-The extraction prompt treats plain STT as the default: when a speaker label is absent, action owners must come from names or teams explicitly mentioned in the utterance text, otherwise the owner remains `미정`.
+The extraction prompt treats plain STT as the only supported transcript shape: action owners must come from names or teams explicitly mentioned in the utterance text, otherwise the owner remains `미정`. The prompt instructs the model to write `speaker_highlights` as discussion/source highlights rather than speaker-attributed notes.
 
 Internally, decisions and action items include:
 

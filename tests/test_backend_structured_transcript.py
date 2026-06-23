@@ -1,4 +1,4 @@
-"""structured transcript API/storage 하네스 단위 테스트입니다."""
+"""plain transcript API/storage 하네스 단위 테스트입니다."""
 
 from __future__ import annotations
 
@@ -24,32 +24,16 @@ sys.modules.setdefault("itsdangerous", fake_itsdangerous)
 from backend.api import routes
 from backend import storage
 from backend.services import pipeline as backend_pipeline
-from backend.schemas import JobResultResponse, StructuredTranscriptPayload, TranscriptJobRequest, TranscriptResultResponse
+from backend.schemas import JobResultResponse, TranscriptJobRequest, TranscriptResultResponse
 from backend.services.pipeline import (
     build_summary_progress_callback,
-    build_normalized_transcript_from_structured_payload,
     run_transcript_summary_pipeline,
     run_transcription_pipeline,
 )
 
 
-def structured_payload_dict() -> dict:
-    """테스트용 structured transcript dict를 반환합니다."""
-    return {
-        "utterances": [
-            {
-                "utterance_id": "u_0001",
-                "speaker": "Speaker 1",
-                "text": "오늘 회의는 네 가지 안건입니다.",
-                "start_ms": 1200,
-                "end_ms": 4500,
-            }
-        ]
-    }
-
-
-class BackendStructuredTranscriptTests(unittest.TestCase):
-    """structured transcript optional API/storage 흐름을 확인합니다."""
+class BackendPlainTranscriptTests(unittest.TestCase):
+    """plain transcript API/storage 흐름을 확인합니다."""
 
     def setUp(self) -> None:
         """pipeline의 영구 DB artifact update는 이 단위 테스트에서 제외합니다."""
@@ -73,12 +57,11 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         storage.JOBS.clear()
 
     def test_transcript_job_request_accepts_plain_transcript_only(self) -> None:
-        """기존 plain transcript request는 structured field 없이도 파싱됩니다."""
+        """plain transcript request는 transcript와 metadata만 파싱합니다."""
         request = TranscriptJobRequest(filename="meeting.txt", transcript="plain text", context="")
 
         self.assertEqual(request.transcript, "plain text")
         self.assertEqual(request.meeting_type, "general")
-        self.assertIsNone(request.structured_transcript)
         self.assertIsNone(request.transcription_job_id)
 
     def test_transcript_job_request_accepts_transcription_job_id(self) -> None:
@@ -91,33 +74,19 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
 
         self.assertEqual(request.transcription_job_id, "stt-job-id")
 
-    def test_transcript_job_request_accepts_structured_transcript(self) -> None:
-        """transcript job request는 optional structured transcript를 받을 수 있습니다."""
-        request = TranscriptJobRequest(
-            filename="meeting.txt",
-            transcript="Speaker 1: 오늘 회의는 네 가지 안건입니다.",
-            structured_transcript=structured_payload_dict(),
-        )
-
-        self.assertIsNotNone(request.structured_transcript)
-        self.assertEqual(request.structured_transcript.utterances[0].utterance_id, "u_0001")
-        self.assertEqual(request.structured_transcript.utterances[0].speaker, "Speaker 1")
-
-    def test_transcript_result_response_serializes_optional_structured_transcript(self) -> None:
-        """transcript result response는 structured transcript를 선택적으로 직렬화합니다."""
+    def test_transcript_result_response_serializes_plain_transcript(self) -> None:
+        """transcript result response는 plain transcript를 직렬화합니다."""
         response = TranscriptResultResponse(
             job_id="job",
             filename="meeting.wav",
             meeting_type="customer_meeting",
-            transcript="Speaker 1: 오늘 회의는 네 가지 안건입니다.",
-            structured_transcript=StructuredTranscriptPayload(**structured_payload_dict()),
+            transcript="오늘 회의는 네 가지 안건입니다.",
         )
 
         dumped = response.model_dump() if hasattr(response, "model_dump") else response.dict()
 
-        self.assertEqual(dumped["structured_transcript"]["utterances"][0]["speaker"], "Speaker 1")
+        self.assertEqual(dumped["transcript"], "오늘 회의는 네 가지 안건입니다.")
         self.assertEqual(dumped["meeting_type"], "customer_meeting")
-        self.assertEqual(dumped["structured_transcript"]["utterances"][0]["start_ms"], 1200)
 
     def test_job_result_response_serializes_meeting_type(self) -> None:
         """회의록 결과 응답은 result header에 표시할 meeting_type을 포함합니다."""
@@ -128,22 +97,12 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         self.assertEqual(dumped["meeting_type"], "technical_review")
 
     def test_storage_keeps_plain_transcript_without_structured_data(self) -> None:
-        """storage는 structured transcript 없이 기존 plain transcript를 저장합니다."""
+        """storage는 plain transcript를 저장합니다."""
         job = storage.create_job("meeting.wav")
 
         storage.mark_job_transcribed(job.id, "plain text")
 
         self.assertEqual(storage.get_job(job.id).result.transcript, "plain text")
-        self.assertIsNone(storage.get_job(job.id).result.structured_transcript)
-
-    def test_storage_keeps_optional_structured_transcript(self) -> None:
-        """storage는 STT 결과의 optional structured transcript를 함께 보관합니다."""
-        job = storage.create_job("meeting.wav")
-        structured_transcript = structured_payload_dict()
-
-        storage.mark_job_transcribed(job.id, "plain text", structured_transcript=structured_transcript)
-
-        self.assertEqual(storage.get_job(job.id).result.structured_transcript, structured_transcript)
 
     def test_storage_keeps_meeting_type_metadata(self) -> None:
         """storage는 작업별 meeting_type metadata를 보관합니다."""
@@ -281,17 +240,8 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
             finally:
                 connection.close()
 
-    def test_backend_pipeline_builds_normalized_transcript_from_structured_payload(self) -> None:
-        """backend pipeline helper는 structured payload를 내부 NormalizedTranscript로 바꿉니다."""
-        normalized = build_normalized_transcript_from_structured_payload(structured_payload_dict())
-
-        self.assertIsNotNone(normalized)
-        self.assertEqual(normalized.utterances[0].utterance_id, "u_0001")
-        self.assertEqual(normalized.utterances[0].speaker, "Speaker 1")
-        self.assertIn("[u_0001] Speaker 1:", normalized.render_for_llm())
-
     def test_transcription_pipeline_plain_mode_keeps_existing_string_flow(self) -> None:
-        """diarized mode가 꺼져 있으면 기존 plain transcript만 저장합니다."""
+        """transcription pipeline은 plain transcript만 저장합니다."""
         job = storage.create_job("meeting.wav")
 
         with patch("backend.services.pipeline.transcribe_audio", return_value="plain transcript") as transcribe_mock, patch(
@@ -304,7 +254,6 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         self.assertEqual([call.args[1] for call in progress_mock.call_args_list], [15, 90, 100])
         self.assertEqual(storage.get_job(job.id).result.transcript, "plain transcript")
         self.assertEqual(storage.get_job(job.id).meeting_type, "execution")
-        self.assertIsNone(storage.get_job(job.id).result.structured_transcript)
 
     def test_transcription_pipeline_passes_requested_stt_provider(self) -> None:
         """업로드 요청의 STT provider 선택은 전사 호출까지 전달됩니다."""
@@ -361,10 +310,9 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         self.assertEqual(storage.get_job(job.id).progress, 88)
         self.assertEqual(storage.get_job(job.id).message, "결과를 정리하는 중입니다.")
 
-    def test_transcript_summary_pipeline_preserves_structured_transcript_for_later_use(self) -> None:
-        """summary pipeline은 structured transcript를 받되 요약은 plain transcript 기준으로 유지합니다."""
+    def test_transcript_summary_pipeline_uses_plain_transcript(self) -> None:
+        """summary pipeline은 plain transcript 기준으로 요약합니다."""
         job = storage.create_job("meeting.txt")
-        structured_transcript = structured_payload_dict()
         summary = {
             "minutes": "회의록",
             "action_items": [],
@@ -377,19 +325,12 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         with patch("backend.services.pipeline.summarize_transcript", return_value=summary) as summarize_mock:
             run_transcript_summary_pipeline(
                 job.id,
-                "Speaker 1: 오늘 회의는 네 가지 안건입니다.",
+                "오늘 회의는 네 가지 안건입니다.",
                 context="",
-                structured_transcript=structured_transcript,
             )
 
-        summarize_mock.assert_called_once()
-        self.assertEqual(summarize_mock.call_args.args, ("Speaker 1: 오늘 회의는 네 가지 안건입니다.",))
-        self.assertEqual(summarize_mock.call_args.kwargs["context"], "")
-        self.assertEqual(summarize_mock.call_args.kwargs["meeting_type"], "general")
-        self.assertIsNotNone(summarize_mock.call_args.kwargs["progress_callback"])
-        normalized = summarize_mock.call_args.kwargs["normalized_transcript"]
-        self.assertEqual(normalized.render_for_llm(), "[u_0001] Speaker 1: 오늘 회의는 네 가지 안건입니다.")
-        self.assertEqual(storage.get_job(job.id).result.structured_transcript, structured_transcript)
+        summarize_mock.assert_called_once_with("오늘 회의는 네 가지 안건입니다.", context="", meeting_type="general", progress_callback=ANY)
+        self.assertEqual(storage.get_job(job.id).result.transcript, "오늘 회의는 네 가지 안건입니다.")
 
     def test_transcript_summary_pipeline_passes_meeting_type(self) -> None:
         """backend summary pipeline은 meeting_type을 summarize_transcript로 전달합니다."""
@@ -413,30 +354,6 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
 
         summarize_mock.assert_called_once_with("plain transcript", context="", meeting_type="customer_meeting", progress_callback=ANY)
         self.assertEqual(storage.get_job(job.id).meeting_type, "customer_meeting")
-
-    def test_transcript_summary_pipeline_falls_back_to_plain_transcript_when_structured_payload_is_invalid(self) -> None:
-        """structured payload가 비어 있거나 유효하지 않으면 기존 plain transcript 경로를 사용합니다."""
-        job = storage.create_job("meeting.txt")
-        summary = {
-            "minutes": "회의록",
-            "action_items": [],
-            "summary_facts": [],
-            "decisions": [],
-            "speaker_highlights": [],
-            "warnings": [],
-        }
-
-        with patch("backend.services.pipeline.summarize_transcript", return_value=summary) as summarize_mock:
-            run_transcript_summary_pipeline(
-                job.id,
-                "plain transcript",
-                context="",
-                structured_transcript={"utterances": [{"speaker": "Speaker 1", "text": "   "}]},
-            )
-
-        summarize_mock.assert_called_once_with("plain transcript", context="", meeting_type="general", progress_callback=ANY)
-        self.assertEqual(storage.get_job(job.id).result.transcript, "plain transcript")
-
 
 class BackendPipelineMeetingFailureTests(unittest.TestCase):
     """회의록 생성 실패가 영구 meeting row에 기록되는지 확인합니다."""

@@ -32,7 +32,6 @@ class PipelineResult:
 
     transcript: str
     minutes: str
-    structured_transcript: dict[str, Any] | None = None
     action_items: list[dict[str, Any]] = field(default_factory=list)
     summary_facts: list[str] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
@@ -197,7 +196,6 @@ def mark_job_chunk_progress(job_id: str, completed_chunks: int, total_chunks: in
 def mark_job_transcribed(
     job_id: str,
     transcript: str,
-    structured_transcript: dict[str, Any] | None = None,
 ) -> None:
     """STT 결과를 저장하고 transcript 검토 가능 상태로 변경합니다."""
     with JOBS_LOCK:
@@ -207,14 +205,13 @@ def mark_job_transcribed(
         job.progress = 100
         job.stage = "Transcript 준비 완료"
         job.message = "음성 변환이 완료되었습니다. Transcript를 검토해 주세요."
-        job.result = PipelineResult(transcript=transcript, minutes="", structured_transcript=structured_transcript)
+        job.result = PipelineResult(transcript=transcript, minutes="")
 
 
 def mark_job_completed(
     job_id: str,
     transcript: str,
     summary: dict[str, Any],
-    structured_transcript: dict[str, Any] | None = None,
 ) -> None:
     """작업 결과를 저장하고 완료 상태로 변경합니다."""
     action_items = summary.get("action_items")
@@ -233,7 +230,6 @@ def mark_job_completed(
         job.result = PipelineResult(
             transcript=transcript,
             minutes=summary.get("minutes") if isinstance(summary.get("minutes"), str) else "",
-            structured_transcript=structured_transcript,
             action_items=[item for item in action_items if isinstance(item, dict)] if isinstance(action_items, list) else [],
             summary_facts=[item for item in summary_facts if isinstance(item, str)] if isinstance(summary_facts, list) else [],
             decisions=[item for item in decisions if isinstance(item, dict)] if isinstance(decisions, list) else [],
