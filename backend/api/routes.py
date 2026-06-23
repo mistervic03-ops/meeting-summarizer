@@ -86,8 +86,13 @@ def create_transcript_process_job(
 
     session_id = get_or_create_session(request, response)
     structured_transcript = dump_structured_transcript(payload.structured_transcript)
-    job = create_job(filename=payload.filename or "transcript.txt")
-    create_meeting_record(job.id, session_id, job.filename, "pending")
+    linked_title = get_meeting_title(payload.transcription_job_id, session_id) if payload.transcription_job_id else None
+    job = create_job(filename=linked_title or payload.filename or "transcript.txt")
+    linked_to_transcription = False
+    if payload.transcription_job_id:
+        linked_to_transcription = link_transcript_to_transcription_meeting(payload.transcription_job_id, job.id, session_id)
+    if not linked_to_transcription:
+        create_meeting_record(job.id, session_id, job.filename, "pending")
     background_tasks.add_task(
         run_transcript_summary_pipeline,
         job.id,
@@ -186,6 +191,37 @@ def create_meeting_record(job_id: str, session_id: str, title: str, status: str)
             """,
             (job_id, session_id, title, status, now.isoformat(), expires_at.isoformat()),
         )
+
+
+def get_meeting_title(meeting_id: str, session_id: str) -> str | None:
+    """현재 세션의 meeting row 제목을 반환합니다."""
+    with get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT title
+            FROM meetings
+            WHERE id = ? AND session_id = ?
+            """,
+            (meeting_id, session_id),
+        ).fetchone()
+    if row is None:
+        return None
+    title = row["title"]
+    return title if isinstance(title, str) and title else None
+
+
+def link_transcript_to_transcription_meeting(transcription_job_id: str, new_job_id: str, session_id: str) -> bool:
+    """STT meeting row를 회의록 생성 job id로 연결합니다."""
+    with get_db_connection() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE meetings
+            SET id = ?, status = ?, error = NULL
+            WHERE id = ? AND session_id = ?
+            """,
+            (new_job_id, "pending", transcription_job_id, session_id),
+        )
+        return cursor.rowcount > 0
 
 
 def mark_meeting_failed(job_id: str, error: str) -> None:

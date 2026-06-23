@@ -44,6 +44,7 @@ class TranscriptJobRequest(BaseModel):
     context: str = ""
     meeting_type: MeetingType = "general"
     structured_transcript: Optional[StructuredTranscriptPayload] = None
+    transcription_job_id: Optional[str] = None
 
 
 class TranscriptResultResponse(BaseModel):

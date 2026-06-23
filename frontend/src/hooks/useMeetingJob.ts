@@ -176,7 +176,14 @@ export function useMeetingJob() {
     setStatus("pending");
 
     try {
-      const createdJob = await createTranscriptJob({ context, filename, meeting_type, structured_transcript, transcript });
+      const createdJob = await createTranscriptJob({
+        context,
+        filename,
+        meeting_type,
+        structured_transcript,
+        transcript,
+        transcriptionJobId: jobId || undefined
+      });
       saveActiveJobSnapshot({ jobId: createdJob.job_id, kind: "minutes" });
       await pollJobUntilComplete(createdJob.job_id);
     } catch (caughtError) {

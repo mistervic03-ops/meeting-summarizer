@@ -59,6 +59,7 @@ export interface CreateTranscriptJobPayload {
   context?: string;
   meeting_type?: MeetingType;
   structured_transcript?: StructuredTranscript | null;
+  transcriptionJobId?: string;
 }
 
 export interface TranscriptUtterance {

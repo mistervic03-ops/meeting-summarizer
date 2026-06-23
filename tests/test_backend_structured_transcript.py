@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sqlite3
 import sys
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
@@ -11,6 +13,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+fake_itsdangerous = types.SimpleNamespace(
+    BadSignature=Exception,
+    SignatureExpired=Exception,
+    TimestampSigner=lambda secret: None,
+)
+sys.modules.setdefault("itsdangerous", fake_itsdangerous)
+
+from backend.api import routes
 from backend import storage
 from backend.schemas import JobResultResponse, StructuredTranscriptPayload, TranscriptJobRequest, TranscriptResultResponse
 from backend.services.pipeline import (
@@ -66,6 +76,17 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         self.assertEqual(request.transcript, "plain text")
         self.assertEqual(request.meeting_type, "general")
         self.assertIsNone(request.structured_transcript)
+        self.assertIsNone(request.transcription_job_id)
+
+    def test_transcript_job_request_accepts_transcription_job_id(self) -> None:
+        """transcript job request는 원본 STT job id를 선택적으로 받을 수 있습니다."""
+        request = TranscriptJobRequest(
+            filename="meeting.txt",
+            transcript="plain text",
+            transcription_job_id="stt-job-id",
+        )
+
+        self.assertEqual(request.transcription_job_id, "stt-job-id")
 
     def test_transcript_job_request_accepts_structured_transcript(self) -> None:
         """transcript job request는 optional structured transcript를 받을 수 있습니다."""
@@ -142,6 +163,60 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         self.assertEqual(updated_job.progress, 46)
         self.assertEqual(updated_job.stage, "음성 변환")
         self.assertIn("2/5 구간 완료", updated_job.message)
+
+    def test_link_transcript_to_transcription_meeting_updates_existing_row(self) -> None:
+        """회의록 job은 기존 STT meeting row id를 새 job id로 바꿔 연결합니다."""
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            """
+            CREATE TABLE meetings(
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                title TEXT,
+                status TEXT,
+                created_at TEXT,
+                expires_at TEXT,
+                transcript_path TEXT,
+                summary_path TEXT,
+                error TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO meetings(id, session_id, title, status, created_at, expires_at, error)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("stt-job-id", "session-id", "meeting.wav", "transcript_ready", "created", "expires", "old error"),
+        )
+
+        try:
+            with patch("backend.api.routes.get_db_connection", return_value=connection):
+                self.assertEqual(routes.get_meeting_title("stt-job-id", "session-id"), "meeting.wav")
+                self.assertTrue(
+                    routes.link_transcript_to_transcription_meeting(
+                        "stt-job-id",
+                        "summary-job-id",
+                        "session-id",
+                    )
+                )
+                self.assertFalse(
+                    routes.link_transcript_to_transcription_meeting(
+                        "missing-job-id",
+                        "unused-job-id",
+                        "session-id",
+                    )
+                )
+
+            rows = connection.execute("SELECT id, title, status, error FROM meetings").fetchall()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["id"], "summary-job-id")
+            self.assertEqual(rows[0]["title"], "meeting.wav")
+            self.assertEqual(rows[0]["status"], "pending")
+            self.assertIsNone(rows[0]["error"])
+        finally:
+            connection.close()
 
     def test_backend_pipeline_builds_normalized_transcript_from_structured_payload(self) -> None:
         """backend pipeline helper는 structured payload를 내부 NormalizedTranscript로 바꿉니다."""

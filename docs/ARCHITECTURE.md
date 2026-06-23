@@ -60,6 +60,7 @@ This document describes the current repository structure and production data flo
 
 - API client: `frontend/src/api/jobs.ts` calls `POST /api/transcript-jobs`.
 - Backend route: `backend/api/routes.py:create_transcript_process_job()`.
+- Reviewed transcripts can include `transcription_job_id` so the generated minutes job updates the original STT meeting history row instead of inserting a duplicate row.
 - Route schedules `backend/services/pipeline.py:run_transcript_summary_pipeline()`.
 - Structured transcript payloads, when present, are converted by `summarization/normalization.py:structured_transcript_payload_to_normalized_transcript()`.
 - The pipeline calls `summarize.py:summarize_transcript()`, which delegates to `summarization/pipeline.py:summarize_transcript()`.
