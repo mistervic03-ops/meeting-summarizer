@@ -11,22 +11,25 @@ Current Spark production deployment means:
 
 ## Diarized Mode
 
-Status: inactive in current Spark production. Removal is planned and in progress.
+Status: inactive in current Spark production. Frontend/API request plumbing has been removed; backend pipeline/provider/transcription internals still contain legacy diarized handling.
 
 Why inactive:
 
-- The frontend audio upload flow does not expose a diarized option and defaults to plain transcription.
-- `frontend/src/hooks/useMeetingJob.ts:startTranscriptionJob()` defaults `transcriptionMode` to `plain`.
-- `frontend/src/pages/UploadPage.tsx` calls `startTranscriptionJob()` without passing `transcriptionMode`.
+- The frontend audio upload flow does not expose a diarized option.
+- The frontend no longer sends a `transcription_mode` form field.
+- `backend/api/routes.py:create_transcription_job()` no longer accepts a `transcription_mode` form field.
 - Spark production uses `STT_PROVIDER=local_gpu_whisper`.
 - `LocalGpuWhisperProvider` explicitly supports only plain transcription and raises for diarized mode.
 - `LocalWhisperProvider` also explicitly supports only plain transcription.
 
-Locations:
+Removed locations:
 
-- `frontend/src/api/types.ts`: still defines `TranscriptionMode = "plain" | "diarized"`.
-- `frontend/src/api/jobs.ts`: still sends `transcription_mode`, defaulting to `plain`.
-- `backend/api/routes.py:create_transcription_job()`: still accepts `transcription_mode` values `plain` and `diarized`.
+- `frontend/src/api/types.ts`: removed `TranscriptionMode = "plain" | "diarized"`.
+- `frontend/src/api/jobs.ts`: stopped sending `transcription_mode`.
+- `backend/api/routes.py:create_transcription_job()`: removed the `transcription_mode` form parameter and validation.
+
+Remaining locations:
+
 - `backend/services/pipeline.py:get_transcription_mode()`: still resolves `TRANSCRIPTION_MODE` and `ENABLE_DIARIZED_TRANSCRIPTION`.
 - `backend/services/pipeline.py:transcribe_audio_for_review()`: still has a diarized branch and plain fallback.
 - `backend/services/stt/providers.py`: provider protocol still includes `TranscriptionMode = Literal["plain", "diarized"]`.
@@ -38,13 +41,12 @@ Locations:
 
 Notes:
 
-- A request can still technically send `transcription_mode=diarized` to the backend API.
-- In the Spark local GPU default, that path is not a production path and falls back after provider failure behavior.
-- Treat this as legacy residue until the planned removal is completed.
+- Requests can no longer select `transcription_mode=diarized` through the public backend API.
+- Internal environment-driven diarized mode is still present until the pipeline/provider/transcription cleanup is completed.
 
 ## `/jobs` One-Shot Endpoint
 
-Status: inactive in current user-facing Spark production flow.
+Status: removed from the frontend and backend API layer.
 
 Why inactive:
 
@@ -54,14 +56,17 @@ Why inactive:
   3. `POST /api/transcript-jobs`
   4. `GET /api/jobs/{job_id}/result`
 - `frontend/src/pages/UploadPage.tsx` starts audio jobs through `startTranscriptionJob()`, not the one-shot minutes job.
-- The one-shot endpoint skips transcript review, which is not the current product flow.
+- The one-shot endpoint skipped transcript review, which is not the current product flow.
 
-Locations:
+Removed locations:
 
-- `backend/api/routes.py:create_process_job()` defines `POST /api/jobs`.
-- `backend/services/pipeline.py:run_meeting_pipeline()` performs STT and summarization in one background task.
-- `frontend/src/api/jobs.ts:createJob()` still exists as the client helper for `POST /api/jobs`.
-- `frontend/src/hooks/useMeetingJob.ts:startMeetingJob()` still exists but is not used by the current upload page audio path.
+- `backend/api/routes.py:create_process_job()` no longer defines `POST /api/jobs`.
+- `frontend/src/api/jobs.ts:createJob()` was removed.
+- `frontend/src/hooks/useMeetingJob.ts:startMeetingJob()` was removed.
+
+Remaining locations:
+
+- `backend/services/pipeline.py:run_meeting_pipeline()` still exists but is no longer called by `backend/api/routes.py`.
 
 Notes:
 

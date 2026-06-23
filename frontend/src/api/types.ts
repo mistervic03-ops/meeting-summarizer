@@ -1,6 +1,5 @@
 export type JobStatus = "idle" | "pending" | "processing" | "completed" | "failed";
 export type SttProviderMode = "local_gpu_whisper" | "openai";
-export type TranscriptionMode = "plain" | "diarized";
 export type MeetingType = "execution" | "customer_meeting" | "technical_review" | "brainstorming" | "general";
 
 export interface CreateJobResponse {
@@ -47,18 +46,11 @@ export interface TranscriptResult {
   structured_transcript?: StructuredTranscript | null;
 }
 
-export interface CreateJobPayload {
-  audioFile: File;
-  context?: string;
-  meetingType?: MeetingType;
-}
-
 export interface CreateTranscriptionJobPayload {
   audioFile: File;
   context?: string;
   meetingType?: MeetingType;
   sttProvider?: SttProviderMode;
-  transcriptionMode?: TranscriptionMode;
 }
 
 export interface CreateTranscriptJobPayload {

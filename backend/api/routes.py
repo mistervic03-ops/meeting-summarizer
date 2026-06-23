@@ -13,14 +13,14 @@ try:
     from backend.db import get_db_connection
     from backend.schemas import JobCreateResponse, JobResultResponse, JobStatusResponse, MeetingType, TranscriptJobRequest, TranscriptResultResponse
     from backend.session import get_or_create_session
-    from backend.services.pipeline import run_meeting_pipeline, run_transcript_summary_pipeline, run_transcription_pipeline
+    from backend.services.pipeline import run_transcript_summary_pipeline, run_transcription_pipeline
     from backend.storage import create_job, get_job, get_job_status_snapshot, mark_job_failed, save_upload_file, set_job_context, set_job_meeting_type
 except ModuleNotFoundError:
     # `backend/` 디렉터리 안에서 직접 서버를 띄우는 개발 흐름을 지원합니다.
     from db import get_db_connection
     from schemas import JobCreateResponse, JobResultResponse, JobStatusResponse, MeetingType, TranscriptJobRequest, TranscriptResultResponse
     from session import get_or_create_session
-    from services.pipeline import run_meeting_pipeline, run_transcript_summary_pipeline, run_transcription_pipeline
+    from services.pipeline import run_transcript_summary_pipeline, run_transcription_pipeline
     from storage import create_job, get_job, get_job_status_snapshot, mark_job_failed, save_upload_file, set_job_context, set_job_meeting_type
 
 router = APIRouter()
@@ -33,35 +33,6 @@ def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.post("/jobs", response_model=JobCreateResponse)
-async def create_process_job(
-    background_tasks: BackgroundTasks,
-    request: Request,
-    response: Response,
-    audio_file: UploadFile = File(...),
-    context: str = Form(default=""),
-    meeting_type: MeetingType = Form(default="execution"),
-) -> JobCreateResponse:
-    """업로드된 오디오와 선택 컨텍스트를 저장하고 백그라운드 처리 작업을 시작합니다."""
-    session_id = get_or_create_session(request, response)
-    job = create_job(filename=audio_file.filename or "uploaded_audio")
-    create_meeting_record(job.id, session_id, job.filename, "pending")
-
-    try:
-        audio_path = await save_upload_file(job.id, audio_file)
-        context_text = context.strip()
-
-        # 긴 STT/요약 작업은 요청 응답을 막지 않도록 백그라운드에서 실행합니다.
-        set_job_meeting_type(job.id, meeting_type)
-        background_tasks.add_task(run_meeting_pipeline, job.id, audio_path, context_text, meeting_type)
-    except Exception as exc:
-        mark_job_failed(job.id, f"업로드 파일을 처리하지 못했습니다: {exc}")
-        mark_meeting_failed(job.id, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return JobCreateResponse(job_id=job.id, status=job.status)
-
-
 @router.post("/transcriptions", response_model=JobCreateResponse)
 async def create_transcription_job(
     background_tasks: BackgroundTasks,
@@ -70,12 +41,9 @@ async def create_transcription_job(
     audio_file: UploadFile = File(...),
     context: str = Form(default=""),
     meeting_type: MeetingType = Form(default="execution"),
-    transcription_mode: str = Form(default="plain"),
     stt_provider: str = Form(default=""),
 ) -> JobCreateResponse:
     """업로드된 오디오를 STT 처리해 transcript 검토 작업을 시작합니다."""
-    if transcription_mode not in {"plain", "diarized"}:
-        raise HTTPException(status_code=400, detail="지원하지 않는 transcription mode입니다.")
     if stt_provider and stt_provider not in {"local_gpu_whisper", "openai"}:
         raise HTTPException(status_code=400, detail="지원하지 않는 STT provider입니다.")
 
@@ -93,9 +61,8 @@ async def create_transcription_job(
             run_transcription_pipeline,
             job.id,
             audio_path,
-            transcription_mode,
-            meeting_type,
-            stt_provider or None,
+            meeting_type=meeting_type,
+            stt_provider=stt_provider or None,
         )
     except Exception as exc:
         mark_job_failed(job.id, f"업로드 파일을 처리하지 못했습니다: {exc}")
