@@ -11,28 +11,29 @@ Current Spark production deployment means:
 
 ## Diarized Mode
 
-Status: inactive in current Spark production. Frontend/API request plumbing has been removed; backend pipeline/provider/transcription internals still contain legacy diarized handling.
+Status: inactive in current Spark production. Frontend/API and backend pipeline/provider plumbing has been removed; `transcribe.py` still contains legacy diarized internals.
 
 Why inactive:
 
 - The frontend audio upload flow does not expose a diarized option.
 - The frontend no longer sends a `transcription_mode` form field.
 - `backend/api/routes.py:create_transcription_job()` no longer accepts a `transcription_mode` form field.
+- `backend/services/pipeline.py:run_transcription_pipeline()` always uses plain STT.
+- STT providers no longer accept a transcription mode parameter.
 - Spark production uses `STT_PROVIDER=local_gpu_whisper`.
-- `LocalGpuWhisperProvider` explicitly supports only plain transcription and raises for diarized mode.
-- `LocalWhisperProvider` also explicitly supports only plain transcription.
 
 Removed locations:
 
 - `frontend/src/api/types.ts`: removed `TranscriptionMode = "plain" | "diarized"`.
 - `frontend/src/api/jobs.ts`: stopped sending `transcription_mode`.
 - `backend/api/routes.py:create_transcription_job()`: removed the `transcription_mode` form parameter and validation.
+- `backend/services/pipeline.py:get_transcription_mode()`: removed environment-driven mode resolution.
+- `backend/services/pipeline.py:transcribe_audio_for_review()`: removed diarized branch and plain fallback.
+- `backend/services/pipeline.py:normalized_transcript_to_structured_payload()`: removed diarized structured-payload conversion.
+- `backend/services/stt/providers.py`: removed `TranscriptionMode` and provider-level mode parameters.
 
 Remaining locations:
 
-- `backend/services/pipeline.py:get_transcription_mode()`: still resolves `TRANSCRIPTION_MODE` and `ENABLE_DIARIZED_TRANSCRIPTION`.
-- `backend/services/pipeline.py:transcribe_audio_for_review()`: still has a diarized branch and plain fallback.
-- `backend/services/stt/providers.py`: provider protocol still includes `TranscriptionMode = Literal["plain", "diarized"]`.
 - `transcribe.py:transcribe_audio_diarized()`: legacy OpenAI diarized workflow.
 - `transcribe.py:diarized_segments_to_utterances()` and `diarized_segments_to_normalized_transcript()`: legacy segment conversion.
 - `transcribe.py:call_diarized_transcription_provider*()`: legacy diarized provider call and retry wrappers.
@@ -42,7 +43,8 @@ Remaining locations:
 Notes:
 
 - Requests can no longer select `transcription_mode=diarized` through the public backend API.
-- Internal environment-driven diarized mode is still present until the pipeline/provider/transcription cleanup is completed.
+- Internal environment-driven diarized mode has been removed from the backend pipeline.
+- Legacy diarized code remains in `transcribe.py` until the transcription-module cleanup is completed.
 
 ## `/jobs` One-Shot Endpoint
 
@@ -63,10 +65,7 @@ Removed locations:
 - `backend/api/routes.py:create_process_job()` no longer defines `POST /api/jobs`.
 - `frontend/src/api/jobs.ts:createJob()` was removed.
 - `frontend/src/hooks/useMeetingJob.ts:startMeetingJob()` was removed.
-
-Remaining locations:
-
-- `backend/services/pipeline.py:run_meeting_pipeline()` still exists but is no longer called by `backend/api/routes.py`.
+- `backend/services/pipeline.py:run_meeting_pipeline()` was removed.
 
 Notes:
 

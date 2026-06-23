@@ -159,7 +159,7 @@ class TranscribeTests(unittest.TestCase):
             transcript = transcribe.transcribe_audio(audio_file)
 
         self.assertEqual(transcript, "plain text")
-        openai_mock.assert_called_once_with(audio_file, mode="plain", progress_callback=None)
+        openai_mock.assert_called_once_with(audio_file, progress_callback=None)
 
     def test_transcribe_audio_provider_override_takes_precedence_over_env(self) -> None:
         """요청별 STT provider 지정은 환경 변수보다 우선합니다."""
@@ -173,7 +173,7 @@ class TranscribeTests(unittest.TestCase):
             transcript = transcribe.transcribe_audio(audio_file, stt_provider="openai")
 
         self.assertEqual(transcript, "cloud transcript")
-        openai_mock.assert_called_once_with(audio_file, mode="plain", progress_callback=None)
+        openai_mock.assert_called_once_with(audio_file, progress_callback=None)
 
     def test_transcribe_audio_local_whisper_uses_mocked_faster_whisper(self) -> None:
         """local_whisper provider는 faster-whisper 모델을 지연 로드해 plain transcript를 반환합니다."""
@@ -237,12 +237,6 @@ class TranscribeTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "requires faster-whisper"):
                 transcribe.transcribe_audio(Path("meeting.wav"))
-
-    def test_transcribe_audio_local_whisper_diarized_mode_fails_cleanly(self) -> None:
-        """local_whisper는 아직 diarized mode를 지원하지 않음을 명확히 알립니다."""
-        with patch.dict(os.environ, {"STT_PROVIDER": "local_whisper"}):
-            with self.assertRaisesRegex(NotImplementedError, "only supports plain transcription"):
-                transcribe.transcribe_audio(Path("meeting.wav"), mode="diarized")
 
     def test_transcribe_audio_local_gpu_whisper_uses_mocked_transformers_pipeline(self) -> None:
         """local_gpu_whisper provider는 resident Transformers pipeline을 plain chunk workflow에 연결합니다."""
@@ -733,12 +727,6 @@ class TranscribeTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "requires torch and transformers"):
                 transcribe.transcribe_audio(Path("meeting.wav"))
-
-    def test_transcribe_audio_local_gpu_whisper_diarized_mode_fails_cleanly(self) -> None:
-        """local_gpu_whisper는 diarized mode를 변경하지 않고 명확히 거절합니다."""
-        with patch.dict(os.environ, {"STT_PROVIDER": "local_gpu_whisper"}):
-            with self.assertRaisesRegex(NotImplementedError, "only supports plain transcription"):
-                transcribe.transcribe_audio(Path("meeting.wav"), mode="diarized")
 
     def test_transcribe_audio_rejects_unknown_stt_provider(self) -> None:
         """지원하지 않는 STT_PROVIDER 값은 명확히 거절합니다."""

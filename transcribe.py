@@ -329,9 +329,10 @@ def transcribe_audio(
     stt_provider: str | None = None,
 ) -> str | NormalizedTranscript:
     """설정된 STT provider로 하나 이상의 오디오 파일을 전사합니다."""
+    if mode != "plain":
+        return _transcribe_audio_openai(audio_files, mode=mode, progress_callback=progress_callback)
     return get_stt_provider(_transcribe_audio_openai, provider_name=stt_provider).transcribe(
         audio_files,
-        mode=mode,
         progress_callback=progress_callback,
     )
 

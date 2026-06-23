@@ -156,9 +156,7 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         """diarized mode가 꺼져 있으면 기존 plain transcript만 저장합니다."""
         job = storage.create_job("meeting.wav")
 
-        with patch.dict("os.environ", {"TRANSCRIPTION_MODE": "plain"}), patch(
-            "backend.services.pipeline.transcribe_audio", return_value="plain transcript"
-        ) as transcribe_mock:
+        with patch("backend.services.pipeline.transcribe_audio", return_value="plain transcript") as transcribe_mock:
             run_transcription_pipeline(job.id, Path("meeting.wav"), meeting_type="execution")
 
         transcribe_mock.assert_called_once_with(Path("meeting.wav"), progress_callback=ANY, stt_provider=None)
@@ -174,7 +172,6 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
             run_transcription_pipeline(
                 job.id,
                 Path("meeting.wav"),
-                transcription_mode="plain",
                 meeting_type="execution",
                 stt_provider="openai",
             )
