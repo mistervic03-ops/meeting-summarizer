@@ -13,5 +13,6 @@ services:
     gpus: all
     environment:
       STT_PROVIDER: local_gpu_whisper
+      PLAIN_TRANSCRIPTION_CONCURRENCY: 4
       LOCAL_GPU_MAX_CONCURRENCY: 4
       LOCAL_GPU_ENABLE_STT_PROMPT: "false"

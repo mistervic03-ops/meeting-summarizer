@@ -51,6 +51,7 @@ local GPU variant의 현재 전제:
 
 - 단일 FastAPI process/worker
 - 프로세스 안의 resident shared Whisper model
+- `PLAIN_TRANSCRIPTION_CONCURRENCY=4` 기반 plain chunk worker
 - `LOCAL_GPU_MAX_CONCURRENCY=4` 기반 GPU inference semaphore
 - 기본 모델은 `openai/whisper-large-v3-turbo`
 - plain chunk size는 현재 `PLAIN_CHUNK_DURATION_SECONDS=300` 유지
@@ -99,6 +100,7 @@ cp .env.example .env
 - `CLAUDE_SUMMARY_MODEL=claude-sonnet-4-6` (only when `SUMMARIZATION_PROVIDER=claude`)
 - `CORS_ORIGINS`
 - `PLAIN_CHUNK_DURATION_SECONDS=300`
+- `PLAIN_TRANSCRIPTION_CONCURRENCY=4`
 - `LOCAL_GPU_MAX_CONCURRENCY=4`
 - `ENABLE_STT_VOCABULARY_HINTS=false`
 
