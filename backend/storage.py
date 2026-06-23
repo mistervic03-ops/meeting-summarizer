@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -19,6 +19,11 @@ UPLOAD_ROOT = Path(tempfile.gettempdir()) / "meeting_summarizer_api"
 ARTIFACT_ROOT = Path("data") / "meetings"
 JOBS: dict[str, "JobRecord"] = {}
 JOBS_LOCK = RLock()
+
+
+def utc_now() -> datetime:
+    """작업 timestamp를 timezone-aware UTC 값으로 저장합니다."""
+    return datetime.now(timezone.utc)
 
 
 @dataclass
@@ -42,7 +47,7 @@ class JobRecord:
     id: str
     filename: str
     status: JobStatus = "pending"
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=utc_now)
     completed_at: datetime | None = None
     error: str | None = None
     result: PipelineResult | None = None
@@ -198,7 +203,7 @@ def mark_job_transcribed(
     with JOBS_LOCK:
         job = require_job(job_id)
         job.status = "completed"
-        job.completed_at = datetime.now()
+        job.completed_at = utc_now()
         job.progress = 100
         job.stage = "Transcript 준비 완료"
         job.message = "음성 변환이 완료되었습니다. Transcript를 검토해 주세요."
@@ -221,7 +226,7 @@ def mark_job_completed(
     with JOBS_LOCK:
         job = require_job(job_id)
         job.status = "completed"
-        job.completed_at = datetime.now()
+        job.completed_at = utc_now()
         job.progress = 100
         job.stage = "완료"
         job.message = "회의록 생성이 완료되었습니다."
@@ -242,7 +247,7 @@ def mark_job_failed(job_id: str, error: str) -> None:
     with JOBS_LOCK:
         job = require_job(job_id)
         job.status = "failed"
-        job.completed_at = datetime.now()
+        job.completed_at = utc_now()
         job.error = error
         job.stage = "실패"
         job.message = "회의록 생성 중 문제가 발생했습니다."

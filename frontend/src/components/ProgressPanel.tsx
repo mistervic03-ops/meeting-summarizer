@@ -18,6 +18,9 @@ const DEFAULT_STEPS = [
   { label: "회의 요약 생성", progress: 88 },
   { label: "결과 정리", progress: 100 }
 ];
+const WARMUP_CHUNK_SECONDS = 75;
+const NORMAL_CHUNK_SECONDS = 35;
+const WARMUP_CHUNK_COUNT = 3;
 
 /**
  * Renders the upload job progress as a quiet, scan-friendly progress section.
@@ -191,7 +194,7 @@ function getProgressTimingDetail(
   }
 
   if (isChunkProgressActive(jobStatus) && jobStatus.completed_chunks != null && jobStatus.total_chunks) {
-    if (jobStatus.completed_chunks < 4) {
+    if (jobStatus.completed_chunks < 2) {
       return "";
     }
     const safeCompleted = Math.max(0, Math.min(jobStatus.completed_chunks, jobStatus.total_chunks));
@@ -199,11 +202,7 @@ function getProgressTimingDetail(
     if (remainingChunks === 0) {
       return "";
     }
-    const estimatedWarmupSeconds = elapsedSeconds * 0.55;
-    const postWarmupElapsedSeconds = elapsedSeconds - estimatedWarmupSeconds;
-    const postWarmupChunks = safeCompleted - 3;
-    const averageSecondsPerChunk = postWarmupElapsedSeconds / postWarmupChunks;
-    return `약 ${formatRemainingDuration(remainingChunks * averageSecondsPerChunk)} 남았습니다`;
+    return `약 ${formatRemainingDuration(getEstimatedSttRemainingSeconds(safeCompleted, remainingChunks))} 남았습니다`;
   }
 
   if (stage.includes("회의록 작성")) {
@@ -214,11 +213,23 @@ function getProgressTimingDetail(
 }
 
 function getElapsedSeconds(createdAt: string, nowMs: number): number {
-  const createdAtMs = new Date(createdAt).getTime();
+  const createdAtMs = new Date(normalizeDateTimeString(createdAt)).getTime();
   if (!Number.isFinite(createdAtMs)) {
     return 0;
   }
   return Math.max(0, (nowMs - createdAtMs) / 1000);
+}
+
+function normalizeDateTimeString(value: string): string {
+  return /(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`;
+}
+
+function getEstimatedSttRemainingSeconds(completedChunks: number, remainingChunks: number): number {
+  if (completedChunks >= WARMUP_CHUNK_COUNT) {
+    return remainingChunks * NORMAL_CHUNK_SECONDS;
+  }
+  const remainingWarmupChunks = WARMUP_CHUNK_COUNT - completedChunks;
+  return (remainingWarmupChunks * WARMUP_CHUNK_SECONDS) + ((remainingChunks - remainingWarmupChunks) * NORMAL_CHUNK_SECONDS);
 }
 
 function isChunkProgressActive(jobStatus: JobStatusResponse | null): boolean {
