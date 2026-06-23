@@ -279,6 +279,33 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(normalized.text, "오늘 회의는 네 가지 안건입니다.")
         self.assertEqual(normalized.render_for_llm(), "[u_0001] Unknown: 오늘 회의는 네 가지 안건입니다.")
 
+    def test_normalize_transcript_splits_plain_paragraph_into_sentence_utterances(self) -> None:
+        """화자 라벨이 없는 plain paragraph는 문장 단위 발화로 나눕니다."""
+        normalized = summarize.normalize_transcript(
+            "오늘 회의는 네 가지 안건입니다. 매출 현황을 확인했습니다! 다음 주 실행 계획도 논의할까요?"
+        )
+
+        self.assertEqual([utterance.utterance_id for utterance in normalized.utterances], ["u_0001", "u_0002", "u_0003"])
+        self.assertEqual([utterance.speaker for utterance in normalized.utterances], [None, None, None])
+        self.assertEqual(
+            [utterance.text for utterance in normalized.utterances],
+            [
+                "오늘 회의는 네 가지 안건입니다.",
+                "매출 현황을 확인했습니다!",
+                "다음 주 실행 계획도 논의할까요?",
+            ],
+        )
+        self.assertEqual(
+            normalized.render_for_llm(),
+            "\n".join(
+                [
+                    "[u_0001] Unknown: 오늘 회의는 네 가지 안건입니다.",
+                    "[u_0002] Unknown: 매출 현황을 확인했습니다!",
+                    "[u_0003] Unknown: 다음 주 실행 계획도 논의할까요?",
+                ]
+            ),
+        )
+
     def test_normalize_transcript_treats_common_colon_headings_as_plain_text(self) -> None:
         """plain transcript의 일반 heading/key label은 speaker로 보지 않습니다."""
         heading_lines = [

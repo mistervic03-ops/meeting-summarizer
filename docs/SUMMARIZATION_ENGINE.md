@@ -89,7 +89,8 @@ preprocess_transcript
 - creates stable utterance records
 - assigns `utterance_id`
 - preserves speaker labels when present
-- supports speakerless plain transcripts with `Unknown`
+- splits speakerless plain transcript lines into sentence-level utterances
+- renders speakerless utterances with `Unknown` only for LLM input
 
 ### 2. Profile and Strategy Selection
 

@@ -256,3 +256,23 @@ npm run build
 ```bash
 curl http://localhost:8000/api/health
 ```
+
+Spark 배포 직후에는 backend container가 `Started` 상태여도 Uvicorn이 요청을 받을 준비가 되기 전 짧은 시간 동안 `curl: (56) Recv failure: Connection reset by peer`가 발생할 수 있습니다. 배포 성공 여부를 단발 `curl`로 판단하지 말고 아래 retry/wait 하네스를 사용합니다.
+
+```bash
+for attempt in $(seq 1 20); do
+  if curl -fsS http://localhost:8000/api/health; then
+    echo
+    break
+  fi
+  if [ "$attempt" -eq 20 ]; then
+    echo "health check failed after 20 attempts" >&2
+    docker compose -f docker-compose.yml -f docker-compose.local-gpu.yml ps
+    docker compose -f docker-compose.yml -f docker-compose.local-gpu.yml logs --tail=80 backend
+    exit 1
+  fi
+  sleep 2
+done
+```
+
+이 하네스가 실패할 때만 container 상태와 backend log를 근거로 배포 실패를 판단합니다.
