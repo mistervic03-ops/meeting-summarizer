@@ -64,6 +64,7 @@ This document describes the current repository structure and production data flo
 - Route schedules `backend/services/pipeline.py:run_transcript_summary_pipeline()`.
 - Structured transcript payloads, when present, are converted by `summarization/normalization.py:structured_transcript_payload_to_normalized_transcript()`.
 - The pipeline calls `summarize.py:summarize_transcript()`, which delegates to `summarization/pipeline.py:summarize_transcript()`.
+- Summarization progress is reported through a summary progress callback, then exposed through the same `GET /api/jobs/{job_id}` polling status fields used by the frontend progress panel.
 
 ### 5. Summarization Engine
 

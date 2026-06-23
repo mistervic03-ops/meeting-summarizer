@@ -58,7 +58,7 @@ def run_transcription_pipeline(
             stt_provider=stt_provider,
         )
         stt_seconds = time.perf_counter() - stt_started_at
-        mark_job_progress(job_id, 95, "Transcript 정리", "검토 화면에 표시할 transcript를 준비하고 있습니다.", stt_seconds=stt_seconds)
+        mark_job_progress(job_id, 65, "Transcript 정리", "검토 화면에 표시할 transcript를 준비하고 있습니다.", stt_seconds=stt_seconds)
         mark_job_transcribed(job_id, transcript)
         transcript_path, summary_path = save_text_artifacts(job_id, transcript, "")
         update_meeting_artifacts(job_id, "transcript_ready", transcript_path, summary_path)
@@ -84,21 +84,27 @@ def run_transcript_summary_pipeline(
     set_job_meeting_type(job_id, meeting_type)
 
     try:
-        mark_job_progress(job_id, 55, "검토 완료", "수정된 transcript를 회의록 생성 기준으로 사용합니다.")
-        mark_job_progress(job_id, 70, "회의록 작성", "회의 내용을 요약하고 액션 아이템을 추출하는 중입니다.")
+        mark_job_progress(job_id, 15, "검토 완료", "수정된 transcript를 회의록 생성 기준으로 사용합니다.")
         summary_started_at = time.perf_counter()
+        summary_progress_callback = build_summary_progress_callback(job_id)
         normalized_transcript = build_normalized_transcript_from_structured_payload(structured_transcript)
         if normalized_transcript is None:
-            summary = summarize_transcript(transcript, context=context, meeting_type=meeting_type)
+            summary = summarize_transcript(
+                transcript,
+                context=context,
+                meeting_type=meeting_type,
+                progress_callback=summary_progress_callback,
+            )
         else:
             summary = summarize_transcript(
                 transcript,
                 context=context,
                 normalized_transcript=normalized_transcript,
                 meeting_type=meeting_type,
+                progress_callback=summary_progress_callback,
             )
         summary_seconds = time.perf_counter() - summary_started_at
-        mark_job_progress(job_id, 90, "결과 정리", "결과 화면에 표시할 회의록을 정리하고 있습니다.", summary_seconds=summary_seconds)
+        mark_job_progress(job_id, 95, "결과 정리", "결과를 정리하는 중입니다.", summary_seconds=summary_seconds)
         mark_job_completed(job_id, transcript=transcript, summary=summary, structured_transcript=structured_transcript)
         transcript_path, summary_path = save_text_artifacts(job_id, transcript, get_summary_text(summary))
         update_meeting_artifacts(target_meeting_id, "completed", transcript_path, summary_path)
@@ -164,3 +170,41 @@ def build_chunk_progress_callback(job_id: str) -> Callable[[int, int], None]:
         mark_job_chunk_progress(job_id, completed_chunks, total_chunks)
 
     return update_chunk_progress
+
+
+def build_summary_progress_callback(job_id: str) -> Callable[[str, dict[str, Any]], None]:
+    """요약 엔진 stage event를 사용자용 job progress로 반영합니다."""
+
+    def update_summary_progress(event: str, payload: dict[str, Any]) -> None:
+        if event == "normalized":
+            mark_job_progress(job_id, 25, "회의록 작성", "회의 내용을 분석하는 중입니다.")
+            return
+
+        if event == "strategy_selected":
+            strategy = str(payload.get("strategy") or "")
+            message = "청크 단위로 구조를 추출합니다." if strategy in {"chunk", "deep"} else "구조 추출을 시작합니다."
+            mark_job_progress(job_id, 35, "회의록 작성", message)
+            return
+
+        if event == "chunk_progress":
+            completed_chunks = int(payload.get("completed_chunks") or 0)
+            total_chunks = int(payload.get("total_chunks") or 0)
+            safe_total = max(0, total_chunks)
+            safe_completed = max(0, min(completed_chunks, safe_total))
+            progress = 35 if safe_total == 0 else 35 + round((safe_completed / safe_total) * 40)
+            message = (
+                f"청크 단위로 구조를 추출합니다. {safe_completed}/{safe_total} 구간 완료"
+                if safe_total > 1
+                else "청크 단위로 구조를 추출합니다."
+            )
+            mark_job_progress(job_id, min(75, progress), "회의록 작성", message)
+            return
+
+        if event == "extraction_complete":
+            mark_job_progress(job_id, 80, "회의록 작성", "회의록을 작성하는 중입니다.")
+            return
+
+        if event == "minutes_complete":
+            mark_job_progress(job_id, 88, "결과 정리", "결과를 정리하는 중입니다.")
+
+    return update_summary_progress

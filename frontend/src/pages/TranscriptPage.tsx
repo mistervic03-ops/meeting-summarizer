@@ -25,8 +25,8 @@ interface TranscriptStats {
  * Lets users review and edit STT text before generating meeting minutes.
  */
 const SUMMARY_PROGRESS_STEPS = [
-  { label: "검토 완료", progress: 55 },
-  { label: "회의 요약 생성", progress: 90 },
+  { label: "검토 완료", progress: 15 },
+  { label: "회의 요약 생성", progress: 88 },
   { label: "결과 정리", progress: 100 }
 ];
 const SPEAKER_RENAME_HELP_TEXT = "화자 이름은 액션 아이템 담당자와 발언자 이름으로 표시됩니다.";

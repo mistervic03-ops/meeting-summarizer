@@ -830,6 +830,40 @@ Speaker 1: 배포 확인
             ["extract:김민수: 첫 번째 논의", "extract:이서연: 두 번째 논의"],
         )
 
+    def test_extract_structure_by_chunks_reports_chunk_progress(self) -> None:
+        """chunk runner는 완료된 chunk 수와 전체 chunk 수를 callback으로 알립니다."""
+        from summarization import chunk_pipeline
+
+        normalized = summarize.normalize_transcript("김민수: 첫 번째 논의\n이서연: 두 번째 논의")
+        chunks = [
+            types.SimpleNamespace(
+                chunk_id="c_0001",
+                start_utterance_id="u_0001",
+                end_utterance_id="u_0001",
+                text="김민수: 첫 번째 논의",
+            ),
+            types.SimpleNamespace(
+                chunk_id="c_0002",
+                start_utterance_id="u_0002",
+                end_utterance_id="u_0002",
+                text="이서연: 두 번째 논의",
+            ),
+        ]
+        progress_events: list[tuple[int, int]] = []
+
+        with patch.object(chunk_pipeline, "segment_transcript", return_value=chunks), patch.object(
+            chunk_pipeline, "extract_structure", return_value=empty_track_b_structure()
+        ), patch.object(chunk_pipeline, "merge_structures", return_value=empty_track_b_structure()):
+            chunk_pipeline.extract_structure_by_chunks(
+                normalized,
+                "2026-05-14",
+                max_utterances=1,
+                overlap_utterances=0,
+                progress_callback=lambda completed, total: progress_events.append((completed, total)),
+            )
+
+        self.assertEqual(progress_events, [(1, 2), (2, 2)])
+
     def test_summary_chunk_concurrency_uses_env_with_bounds(self) -> None:
         """SUMMARY_CHUNK_CONCURRENCY는 1~8 범위로 제한됩니다."""
         from summarization import chunk_pipeline
@@ -1010,6 +1044,40 @@ Speaker 1: 배포 확인
             )
         )
 
+    def test_summarize_transcript_reports_direct_progress_events(self) -> None:
+        """summary pipeline은 direct 경로의 주요 진행 단계를 callback으로 알립니다."""
+        preprocessed = summarize.PreprocessedTranscript("정리된 transcript", "2026-05-14")
+        structure = empty_track_b_structure()
+        profile = summarize.TranscriptProfile(
+            char_count=10,
+            utterance_count=1,
+            speaker_count=0,
+            action_cue_count=0,
+            decision_cue_count=0,
+            risk_cue_count=0,
+            requirement_cue_count=0,
+            estimated_complexity="simple",
+        )
+        progress_events: list[tuple[str, dict]] = []
+
+        with patch.object(summarize, "preprocess_transcript", return_value=preprocessed), patch.object(
+            summarize, "extract_structure", return_value=structure
+        ), patch.object(summarize, "validate_structure", return_value=structure), patch.object(
+            summarize, "generate_minutes", return_value="자연어 회의록"
+        ), patch.object(summarize, "render_output", return_value="최종 출력"), patch.object(
+            summarize, "analyze_transcript_profile", return_value=profile
+        ), patch.object(summarize, "choose_processing_strategy", return_value="direct"):
+            summarize.summarize_transcript(
+                "raw transcript",
+                progress_callback=lambda event, payload: progress_events.append((event, payload.copy())),
+            )
+
+        self.assertEqual(
+            [event for event, _payload in progress_events],
+            ["normalized", "strategy_selected", "extraction_complete", "minutes_complete"],
+        )
+        self.assertEqual(progress_events[1][1], {"strategy": "direct"})
+
     def test_summarize_transcript_uses_provided_normalized_transcript_without_renormalizing(self) -> None:
         """structured path는 제공된 NormalizedTranscript를 우선 사용하고 plain 재정규화를 건너뜁니다."""
         normalized = summarize.NormalizedTranscript(
@@ -1110,6 +1178,60 @@ Speaker 1: 배포 확인
         generate_mock.assert_called_once_with("정리된 transcript", validated_structure, "", "general", glossary_terms=ANY)
         render_mock.assert_called_once_with(validated_structure, "자연어 회의록", "general")
         self.assertTrue(any(call.args == ("summarize_transcript using chunk extraction path",) for call in log_mock.call_args_list))
+
+    def test_summarize_transcript_reports_chunk_progress_events(self) -> None:
+        """summary pipeline은 chunk 경로에서 chunk별 진행률 event를 전달합니다."""
+        preprocessed = summarize.PreprocessedTranscript("정리된 transcript", "2026-05-14")
+        chunk_structure = empty_track_b_structure()
+        profile = summarize.TranscriptProfile(
+            char_count=9000,
+            utterance_count=80,
+            speaker_count=2,
+            action_cue_count=0,
+            decision_cue_count=0,
+            risk_cue_count=0,
+            requirement_cue_count=0,
+            estimated_complexity="standard",
+        )
+        progress_events: list[tuple[str, dict]] = []
+
+        def extract_chunks_side_effect(*args, **kwargs):
+            """요약 pipeline이 넘긴 chunk progress callback을 호출합니다."""
+            kwargs["progress_callback"](1, 2)
+            kwargs["progress_callback"](2, 2)
+            return chunk_structure
+
+        with patch.object(summarize, "preprocess_transcript", return_value=preprocessed), patch.object(
+            summarize, "validate_structure", return_value=chunk_structure
+        ), patch.object(summarize, "generate_minutes", return_value="자연어 회의록"), patch.object(
+            summarize, "render_output", return_value="최종 출력"
+        ), patch.object(summarize, "analyze_transcript_profile", return_value=profile), patch.object(
+            summarize, "choose_processing_strategy", return_value="chunk"
+        ), patch.object(
+            summarize,
+            "extract_structure_by_chunks",
+            create=True,
+            side_effect=extract_chunks_side_effect,
+        ):
+            summarize.summarize_transcript(
+                "raw transcript",
+                progress_callback=lambda event, payload: progress_events.append((event, payload.copy())),
+            )
+
+        self.assertEqual(
+            [event for event, _payload in progress_events],
+            [
+                "normalized",
+                "strategy_selected",
+                "chunk_progress",
+                "chunk_progress",
+                "extraction_complete",
+                "minutes_complete",
+            ],
+        )
+        self.assertEqual(progress_events[1][1], {"strategy": "chunk"})
+        self.assertEqual(progress_events[2][1], {"completed_chunks": 1, "total_chunks": 2})
+        self.assertEqual(progress_events[3][1], {"completed_chunks": 2, "total_chunks": 2})
 
     def test_summarize_transcript_loads_glossary_once_for_chunk_extraction(self) -> None:
         """chunk 경로에서도 요약 용어집은 summarize_transcript 단위로 한 번만 로드됩니다."""

@@ -25,6 +25,7 @@ from backend.api import routes
 from backend import storage
 from backend.schemas import JobResultResponse, StructuredTranscriptPayload, TranscriptJobRequest, TranscriptResultResponse
 from backend.services.pipeline import (
+    build_summary_progress_callback,
     build_normalized_transcript_from_structured_payload,
     run_transcript_summary_pipeline,
     run_transcription_pipeline,
@@ -161,7 +162,7 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         updated_job = storage.get_job(job.id)
         self.assertEqual(updated_job.completed_chunks, 2)
         self.assertEqual(updated_job.total_chunks, 5)
-        self.assertEqual(updated_job.progress, 46)
+        self.assertEqual(updated_job.progress, 32)
         self.assertEqual(updated_job.stage, "음성 변환")
         self.assertIn("2/5 구간 완료", updated_job.message)
 
@@ -315,6 +316,46 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         transcribe_mock.assert_called_once_with(Path("meeting.wav"), progress_callback=ANY, stt_provider="openai")
         self.assertEqual(storage.get_job(job.id).result.transcript, "cloud transcript")
 
+    def test_stt_chunk_progress_uses_10_to_65_percent_range(self) -> None:
+        """STT chunk 진행률은 10%에서 시작해 65%까지 올라갑니다."""
+        job = storage.create_job("meeting.wav")
+        storage.mark_job_processing(job.id)
+
+        storage.mark_job_chunk_progress(job.id, completed_chunks=0, total_chunks=10)
+        self.assertEqual(storage.get_job(job.id).progress, 10)
+
+        storage.mark_job_chunk_progress(job.id, completed_chunks=5, total_chunks=10)
+        self.assertEqual(storage.get_job(job.id).progress, 38)
+
+        storage.mark_job_chunk_progress(job.id, completed_chunks=10, total_chunks=10)
+        self.assertEqual(storage.get_job(job.id).progress, 65)
+
+    def test_summary_progress_callback_uses_summary_stage_range(self) -> None:
+        """요약 progress callback은 독립 summary job 기준 구간으로 job 상태를 갱신합니다."""
+        job = storage.create_job("meeting.txt")
+        storage.mark_job_processing(job.id)
+        callback = build_summary_progress_callback(job.id)
+
+        callback("normalized", {})
+        self.assertEqual(storage.get_job(job.id).progress, 25)
+        self.assertEqual(storage.get_job(job.id).message, "회의 내용을 분석하는 중입니다.")
+
+        callback("strategy_selected", {"strategy": "chunk"})
+        self.assertEqual(storage.get_job(job.id).progress, 35)
+        self.assertEqual(storage.get_job(job.id).message, "청크 단위로 구조를 추출합니다.")
+
+        callback("chunk_progress", {"completed_chunks": 1, "total_chunks": 2})
+        self.assertEqual(storage.get_job(job.id).progress, 55)
+        self.assertEqual(storage.get_job(job.id).message, "청크 단위로 구조를 추출합니다. 1/2 구간 완료")
+
+        callback("extraction_complete", {})
+        self.assertEqual(storage.get_job(job.id).progress, 80)
+        self.assertEqual(storage.get_job(job.id).message, "회의록을 작성하는 중입니다.")
+
+        callback("minutes_complete", {})
+        self.assertEqual(storage.get_job(job.id).progress, 88)
+        self.assertEqual(storage.get_job(job.id).message, "결과를 정리하는 중입니다.")
+
     def test_transcript_summary_pipeline_preserves_structured_transcript_for_later_use(self) -> None:
         """summary pipeline은 structured transcript를 받되 요약은 plain transcript 기준으로 유지합니다."""
         job = storage.create_job("meeting.txt")
@@ -340,6 +381,7 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
         self.assertEqual(summarize_mock.call_args.args, ("Speaker 1: 오늘 회의는 네 가지 안건입니다.",))
         self.assertEqual(summarize_mock.call_args.kwargs["context"], "")
         self.assertEqual(summarize_mock.call_args.kwargs["meeting_type"], "general")
+        self.assertIsNotNone(summarize_mock.call_args.kwargs["progress_callback"])
         normalized = summarize_mock.call_args.kwargs["normalized_transcript"]
         self.assertEqual(normalized.render_for_llm(), "[u_0001] Speaker 1: 오늘 회의는 네 가지 안건입니다.")
         self.assertEqual(storage.get_job(job.id).result.structured_transcript, structured_transcript)
@@ -364,7 +406,7 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
                 meeting_type="customer_meeting",
         )
 
-        summarize_mock.assert_called_once_with("plain transcript", context="", meeting_type="customer_meeting")
+        summarize_mock.assert_called_once_with("plain transcript", context="", meeting_type="customer_meeting", progress_callback=ANY)
         self.assertEqual(storage.get_job(job.id).meeting_type, "customer_meeting")
 
     def test_transcript_summary_pipeline_falls_back_to_plain_transcript_when_structured_payload_is_invalid(self) -> None:
@@ -387,7 +429,7 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
                 structured_transcript={"utterances": [{"speaker": "Speaker 1", "text": "   "}]},
             )
 
-        summarize_mock.assert_called_once_with("plain transcript", context="", meeting_type="general")
+        summarize_mock.assert_called_once_with("plain transcript", context="", meeting_type="general", progress_callback=ANY)
         self.assertEqual(storage.get_job(job.id).result.transcript, "plain transcript")
 
 

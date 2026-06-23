@@ -39,13 +39,12 @@ const INPUT_MODES: Array<{
 ];
 const TRANSCRIPTION_PROGRESS_STEPS = [
   { label: "업로드 준비", progress: 10 },
-  { label: "음성 분석 준비", progress: 20 },
-  { label: "음성 변환", progress: 85 },
+  { label: "음성 변환", progress: 65 },
   { label: "결과 정리", progress: 100 }
 ];
 const SUMMARY_PROGRESS_STEPS = [
-  { label: "내용 확인", progress: 55 },
-  { label: "회의 요약 생성", progress: 90 },
+  { label: "검토 완료", progress: 15 },
+  { label: "회의 요약 생성", progress: 88 },
   { label: "결과 정리", progress: 100 }
 ];
 

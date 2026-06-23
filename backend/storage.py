@@ -161,7 +161,7 @@ def mark_job_progress(
     """작업의 현재 진행률과 사용자에게 보여줄 상태 메시지를 저장합니다."""
     with JOBS_LOCK:
         job = require_job(job_id)
-        job.progress = max(0, min(100, progress))
+        job.progress = max(job.progress, max(0, min(100, progress)))
         job.stage = stage
         job.message = message
 
@@ -175,13 +175,13 @@ def mark_job_chunk_progress(job_id: str, completed_chunks: int, total_chunks: in
     """STT 청크 완료 수를 작업 상태에 반영합니다."""
     safe_total = max(0, total_chunks)
     safe_completed = max(0, min(completed_chunks, safe_total))
-    progress = 20 if safe_total == 0 else 20 + round((safe_completed / safe_total) * 65)
+    progress = 10 if safe_total == 0 else 10 + round((safe_completed / safe_total) * 55)
 
     with JOBS_LOCK:
         job = require_job(job_id)
         job.completed_chunks = safe_completed
         job.total_chunks = safe_total
-        job.progress = max(job.progress, min(85, progress))
+        job.progress = max(job.progress, min(65, progress))
         job.stage = "음성 변환"
         if safe_total > 1:
             job.message = f"음성을 텍스트로 변환하는 중입니다. {safe_completed}/{safe_total} 구간 완료"

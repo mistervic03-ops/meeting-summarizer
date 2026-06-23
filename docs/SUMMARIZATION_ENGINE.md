@@ -110,6 +110,7 @@ Direct mode calls `extract_structure()`.
 
 Chunk/deep mode calls `extract_structure_by_chunks()`, then merges chunk outputs.
 Chunk extraction runs chunks concurrently while preserving merge order. The worker count is controlled by `SUMMARY_CHUNK_CONCURRENCY` with a default of 4 and a maximum of 8.
+When the backend provides a progress callback, chunk extraction reports completed chunk counts so the job polling response can advance during long structure extraction.
 
 The model-facing schema returns:
 
@@ -157,6 +158,20 @@ These grounding fields are used for validation but are not exposed in the public
 - `warnings`
 
 Public action items and decisions intentionally hide `source_quote` and `source_utterance_ids` until the API/UI explicitly supports exposing them.
+
+### Progress Reporting
+
+`summarize_transcript()` accepts an optional progress callback. The default remains `None` so existing callers keep the same public return shape.
+
+The backend uses this callback to report:
+
+- normalized transcript ready
+- strategy selected (`direct`, `chunk`, or `deep`)
+- chunk extraction progress, when chunk/deep strategy is used
+- structure extraction complete
+- natural-language minutes generation complete
+
+Progress percentages are monotonic within each independent job. STT chunk progress maps to 10-65%, while the separate summarization job starts at 15%, advances through 25%, 35%, chunk extraction progress from 35-75%, then 80%, 88%, 95%, and completion at 100%.
 
 ## Current Constraints
 

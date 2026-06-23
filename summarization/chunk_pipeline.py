@@ -6,7 +6,7 @@ import logging
 import os
 import time
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from summarization.chunking import segment_transcript
@@ -28,6 +28,7 @@ def extract_structure_by_chunks(
     overlap_utterances: int = 8,
     meeting_type: str = "general",
     glossary_terms: Sequence[str] | None = None,
+    progress_callback: Any | None = None,
 ) -> dict[str, Any]:
     """정규화된 전사문을 chunk별로 구조 추출한 뒤 단순 병합합니다."""
     chunks = segment_transcript(
@@ -50,24 +51,43 @@ def extract_structure_by_chunks(
                 glossary_terms,
             )
         ]
+        notify_chunk_progress(progress_callback, completed_chunks=1, total_chunks=1)
         return merge_structures(structures)
 
     max_workers = min(get_summary_chunk_concurrency(), len(chunks))
+    structures: list[dict[str, Any] | None] = [None] * len(chunks)
+    completed_chunks = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        structures = list(
-            executor.map(
-                lambda chunk: extract_chunk_structure(
+        future_to_index = {
+            executor.submit(
+                extract_chunk_structure,
                     chunk,
                     meeting_date,
                     context,
                     meeting_type,
                     glossary_terms,
-                ),
-                chunks,
-            )
-        )
+            ): index
+            for index, chunk in enumerate(chunks)
+        }
+        for future in as_completed(future_to_index):
+            index = future_to_index[future]
+            structures[index] = future.result()
+            completed_chunks += 1
+            notify_chunk_progress(progress_callback, completed_chunks=completed_chunks, total_chunks=len(chunks))
 
-    return merge_structures(structures)
+    ordered_structures: list[dict[str, Any]] = []
+    for structure in structures:
+        if structure is None:
+            raise RuntimeError("Chunk extraction did not produce a structure.")
+        ordered_structures.append(structure)
+    return merge_structures(ordered_structures)
+
+
+def notify_chunk_progress(progress_callback: Any | None, completed_chunks: int, total_chunks: int) -> None:
+    """선택적 chunk 진행률 callback을 호출합니다."""
+    if progress_callback is None:
+        return
+    progress_callback(completed_chunks, total_chunks)
 
 
 def get_summary_chunk_concurrency() -> int:

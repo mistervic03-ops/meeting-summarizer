@@ -6,7 +6,7 @@ import logging
 import json
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from openai import OpenAI
@@ -32,6 +32,7 @@ from summarization.validation import validate_structure
 
 logger = logging.getLogger("summarize")
 _compat_facade: Any | None = None
+SummaryProgressCallback = Callable[[str, dict[str, Any]], None]
 
 
 def summarize_meeting(transcript: str) -> str:
@@ -44,6 +45,7 @@ def summarize_transcript(
     context: str = "",
     normalized_transcript: NormalizedTranscript | None = None,
     meeting_type: str = "general",
+    progress_callback: SummaryProgressCallback | None = None,
 ) -> SummaryResult:
     """전처리, 구조 추출, 회의록 생성을 실행하고 구조화 결과를 반환합니다."""
     try:
@@ -78,11 +80,13 @@ def summarize_transcript(
             )
             preprocessed = PreprocessedTranscript(normalized_transcript.text, meeting_date)
             logger.info("summarize_transcript using provided normalized_transcript")
+        notify_summary_progress(progress_callback, "normalized")
 
         profile = resolve_compat_name("analyze_transcript_profile", analyze_transcript_profile)(normalized_transcript)
         selected_strategy = resolve_compat_name("choose_processing_strategy", choose_processing_strategy)(profile)
         resolve_compat_name("log_transcript_profile", log_transcript_profile)(profile, selected_strategy)
         logger.info("summarize_transcript selected_strategy=%s", selected_strategy)
+        notify_summary_progress(progress_callback, "strategy_selected", strategy=selected_strategy)
         provider = resolve_compat_name("get_summarization_provider", get_summarization_provider)()
         structure_model = get_structure_model_for_provider(provider)
         summary_model = get_summary_model_for_provider(provider)
@@ -108,6 +112,7 @@ def summarize_transcript(
                 context,
                 meeting_type=resolved_meeting_type,
                 glossary_terms=glossary_terms,
+                progress_callback=build_chunk_progress_callback(progress_callback),
             )
             extraction_stage = "chunk_extraction"
         else:
@@ -132,6 +137,7 @@ def summarize_transcript(
             structure_output_length(structure),
             elapsed,
         )
+        notify_summary_progress(progress_callback, "extraction_complete", strategy=selected_strategy)
 
         policy_result = resolve_compat_name("apply_extraction_policy", apply_extraction_policy)(structure, resolved_meeting_type)
         structure = policy_result.structure
@@ -168,6 +174,7 @@ def summarize_transcript(
             len(minutes),
             elapsed,
         )
+        notify_summary_progress(progress_callback, "minutes_complete")
 
         markdown, elapsed = run_stage(
             "render_output",
@@ -191,6 +198,36 @@ def run_timed_stage(stage_name: str, func: Any, *args: Any, **kwargs: Any) -> tu
         return func(*args, **kwargs), time.perf_counter() - started_at
     except Exception as exc:
         raise RuntimeError(f"{stage_name} failed: {exc}") from exc
+
+
+def build_chunk_progress_callback(progress_callback: SummaryProgressCallback | None) -> Callable[[int, int], None] | None:
+    """chunk extraction 진행률을 summary progress event로 변환합니다."""
+    if progress_callback is None:
+        return None
+
+    def notify_chunk_progress(completed_chunks: int, total_chunks: int) -> None:
+        notify_summary_progress(
+            progress_callback,
+            "chunk_progress",
+            completed_chunks=completed_chunks,
+            total_chunks=total_chunks,
+        )
+
+    return notify_chunk_progress
+
+
+def notify_summary_progress(
+    progress_callback: SummaryProgressCallback | None,
+    event: str,
+    **payload: Any,
+) -> None:
+    """선택적 summary progress callback을 호출하되 요약 실패 원인으로 만들지 않습니다."""
+    if progress_callback is None:
+        return
+    try:
+        progress_callback(event, payload)
+    except Exception as exc:
+        logger.warning("summary_progress_callback_failed event=%s error=%s", event, exc)
 
 
 def get_structure_model_for_provider(provider: str) -> str:
