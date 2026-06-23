@@ -277,7 +277,7 @@ class SummarizeTests(unittest.TestCase):
         normalized = summarize.normalize_transcript("오늘 회의는 네 가지 안건입니다.")
 
         self.assertEqual(normalized.text, "오늘 회의는 네 가지 안건입니다.")
-        self.assertEqual(normalized.render_for_llm(), "[u_0001] Unknown: 오늘 회의는 네 가지 안건입니다.")
+        self.assertEqual(normalized.render_for_llm(), "[u_0001] 오늘 회의는 네 가지 안건입니다.")
 
     def test_normalize_transcript_treats_common_colon_headings_as_plain_text(self) -> None:
         """plain transcript의 일반 heading/key label은 speaker로 보지 않습니다."""
@@ -320,8 +320,8 @@ class SummarizeTests(unittest.TestCase):
             normalized.render_for_llm(),
             "\n".join(
                 [
-                    "[u_0001] Unknown: 회의 목적: KT와 향후 협력 방향 논의",
-                    "[u_0002] Unknown: 추가 논의 범위를 확인합니다.",
+                    "[u_0001] 회의 목적: KT와 향후 협력 방향 논의",
+                    "[u_0002] 추가 논의 범위를 확인합니다.",
                     "[u_0003] 김민수: 배포 확인",
                 ]
             ),
@@ -451,7 +451,7 @@ Speaker 1: 배포 확인
             chunks[0].text,
             "\n".join(
                 [
-                    "[u_0001] Unknown: 회의 목적 공유",
+                    "[u_0001] 회의 목적 공유",
                     "[u_0002] 김민수: 첫 발언입니다.",
                     "[u_0003] 이서연: 확인했습니다.",
                 ]
@@ -1022,7 +1022,7 @@ Speaker 1: 배포 확인
         self.assertEqual(profile_mock.call_args.args[0].text, "정리된 transcript")
         strategy_mock.assert_called_once_with(profile)
         extract_mock.assert_called_once_with(
-            "[u_0001] Unknown: 정리된 transcript",
+            "[u_0001] 정리된 transcript",
             "2026-05-14",
             "",
             "general",
@@ -1363,7 +1363,7 @@ Speaker 1: 배포 확인
         self.assertEqual(result["summary_facts"], [])
         self.assertEqual(result["action_items"], [])
         extract_mock.assert_called_once_with(
-            "[u_0001] Unknown: 정리된 transcript",
+            "[u_0001] 정리된 transcript",
             "2026-05-14",
             "",
             "general",
@@ -1391,7 +1391,7 @@ Speaker 1: 배포 확인
             summarize.summarize_transcript("raw transcript", context="VIP 프로젝트: 중요 고객")
 
         extract_mock.assert_called_once_with(
-            "[u_0001] Unknown: 정리된 transcript",
+            "[u_0001] 정리된 transcript",
             "2026-05-14",
             "VIP 프로젝트: 중요 고객",
             "general",
@@ -1414,7 +1414,7 @@ Speaker 1: 배포 확인
             summarize.summarize_transcript("raw transcript", meeting_type="technical_review")
 
         extract_mock.assert_called_once_with(
-            "[u_0001] Unknown: 정리된 transcript",
+            "[u_0001] 정리된 transcript",
             "2026-05-14",
             "",
             "technical_review",
@@ -1438,7 +1438,7 @@ Speaker 1: 배포 확인
             summarize.summarize_transcript("raw transcript", meeting_type="unknown")
 
         extract_mock.assert_called_once_with(
-            "[u_0001] Unknown: 정리된 transcript",
+            "[u_0001] 정리된 transcript",
             "2026-05-14",
             "",
             "general",
@@ -1591,11 +1591,12 @@ Speaker 1: 배포 확인
         self.assertIn("DWH 적재 로그 확인", prompt)
         self.assertIn("source_quote는 \"미정\"이 아니라 빈 문자열", prompt)
         self.assertIn("삭제하지 말고 confidence를 low", prompt)
-        self.assertIn("1인칭으로 업무 수행을 말하면 owner는 \"제가\"나 \"저희\"가 아니라 해당 speaker label", prompt)
+        self.assertIn("speaker label이 있는 발화에서 발화자가 \"제가 하겠습니다\"", prompt)
+        self.assertIn("owner는 \"제가\"나 \"저희\"가 아니라 해당 speaker label", prompt)
         self.assertIn("owner는 \"영업담당자\"", prompt)
-        self.assertIn("\"Unknown\"은 실제 speaker나 owner가 아닙니다", prompt)
-        self.assertIn("owner로 사용하지 마세요", prompt)
-        self.assertIn("owner 근거가 \"Unknown\"뿐이거나 speaker label이 없으면 owner는 \"미정\"", prompt)
+        self.assertIn("speaker label이 없는 plain STT 발화에서는 speaker label로 owner를 추론하지 마세요", prompt)
+        self.assertIn("발화 텍스트 안에 명시된 사람/팀 이름만 owner로 사용", prompt)
+        self.assertIn("이름 근거가 없으면 owner는 \"미정\"", prompt)
         self.assertIn("\"Speaker 1\", \"Speaker 2\" 같은 speaker label은 transcript에 실제 source speaker label", prompt)
         self.assertIn("owner가 실제로 \"미정\"일 때만 담당자 확인 warning", prompt)
         self.assertIn("confidence가 low인 항목은 warnings에 추가", prompt)
@@ -1607,7 +1608,7 @@ Speaker 1: 배포 확인
         self.assertIn("speaker_highlights에는 주요 발언 또는 논의 포인트", prompt)
         self.assertIn("summary_facts에 넣기에는 세부적인 기술 설명, 고객 관심사, 열린 질문, 리스크, 예시, 수치, follow-up 후보", prompt)
         self.assertIn("신뢰할 수 있는 화자명이 있을 때만 화자별 하이라이트", prompt)
-        self.assertIn("speaker label이 없거나 \"Unknown\"처럼 불확실하면 화자를 만들지 말고", prompt)
+        self.assertIn("speaker label이 없으면 화자를 만들지 말고", prompt)
         self.assertIn("plain transcript에서는 speaker_highlights를 화자별 발언이 아니라 주요 논의/source highlight", prompt)
         self.assertIn("speaker_highlights만으로 새로운 사실, 결정, action_item을 만들지 마세요", prompt)
 

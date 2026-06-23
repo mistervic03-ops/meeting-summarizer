@@ -90,7 +90,7 @@ preprocess_transcript
 - assigns `utterance_id`
 - preserves speaker labels when present
 - preserves speakerless plain transcript lines as line-level utterances
-- renders speakerless utterances with `Unknown` only for LLM input
+- renders speakerless utterances as `[utterance_id] text` without a synthetic speaker label
 
 ### 2. Profile and Strategy Selection
 

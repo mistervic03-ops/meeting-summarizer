@@ -34,8 +34,9 @@ class TranscriptUtterance:
 
     def render_for_llm(self) -> str:
         """LLM 입력에서 발화 ID와 화자 정보를 보존한 한 줄 문자열을 반환합니다."""
-        speaker_label = self.speaker or "Unknown"
-        return f"[{self.utterance_id}] {speaker_label}: {self.text}"
+        if self.speaker:
+            return f"[{self.utterance_id}] {self.speaker}: {self.text}"
+        return f"[{self.utterance_id}] {self.text}"
 
 
 @dataclass(frozen=True)
