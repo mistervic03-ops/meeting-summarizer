@@ -185,7 +185,10 @@ def build_minutes_focus_guidance(meeting_type: str | None = None) -> str:
     """회의 유형에 맞는 자연어 회의록 작성 초점을 반환합니다."""
     resolved_meeting_type = normalize_meeting_type(meeting_type)
     if resolved_meeting_type == "execution":
-        return "- 진행 상황, blocker, 일정, 운영상 합의가 자연스럽게 드러나게 작성하세요."
+        return (
+            "- 진행 상황, blocker, 일정, 운영상 합의가 자연스럽게 드러나게 작성하세요.\n"
+            "- blocker와 상태 업데이트는 명시적 담당자, 요청, 실행 약속과 연결된 경우가 아니면 speaker_highlights 맥락으로 다루세요."
+        )
     if resolved_meeting_type == "technical_review":
         return "- 핵심 개념, 아키텍처, 기술 방향, tradeoff, 설명과 질문 응답 흐름을 중심으로 작성하세요."
     if resolved_meeting_type == "customer_meeting":

@@ -134,6 +134,8 @@ These grounding fields are used for validation but are not exposed in the public
 ### 4. Policy and Validation
 
 `apply_extraction_policy()` applies meeting-type-specific rules and can downgrade weak action/decision candidates to discussion notes.
+Execution meetings keep high recall for well-formed operational actions, but low-confidence candidates without owner, due date, or strong action evidence are downgraded to discussion notes.
+Customer meetings, technical reviews, and brainstorming sessions bias requirements, objections, weak technical directions, and exploratory ideas toward `speaker_highlights` unless the transcript contains explicit ownership, convergence, or follow-up commitment.
 
 `validate_structure()` performs deterministic Python checks:
 

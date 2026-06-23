@@ -130,6 +130,7 @@ class SummarizeMinutesTests(unittest.TestCase):
         self.assertIn("고객 관심사, 검증 포인트, 협업 방향", customer_prompt)
         self.assertIn("아이디어, 대안, 탐색적 논의", brainstorming_prompt)
         self.assertIn("진행 상황, blocker, 일정", execution_prompt)
+        self.assertIn("blocker와 상태 업데이트는 명시적 담당자, 요청, 실행 약속", execution_prompt)
 
     def test_normalize_generated_minutes_markdown_preserves_regular_content(self) -> None:
         """회의록 Markdown 정리는 의미 있는 heading, bullet, table-like text를 바꾸지 않습니다."""

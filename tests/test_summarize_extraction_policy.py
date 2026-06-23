@@ -96,12 +96,15 @@ class SummarizeExtractionPolicyTests(unittest.TestCase):
 
         self.assertIn("회의 유형: technical_review", technical_prompt)
         self.assertIn("제약 조건, 설계 tradeoff, 리스크", technical_prompt)
+        self.assertIn('"가능해 보인다", "검토 대상", "대안으로 언급", "고려해볼 수 있다"', technical_prompt)
         self.assertIn("회의 유형: execution", execution_prompt)
         self.assertIn("진행 상황, 담당자, 일정, 후속 작업을 원문 근거", execution_prompt)
         self.assertIn("회의 유형: customer_meeting", customer_prompt)
         self.assertIn("고객 요구, 우려사항, 요구사항, 리스크", customer_prompt)
+        self.assertIn("고객 요구사항, 이의제기, 열린 질문, 검증 포인트", customer_prompt)
         self.assertIn("회의 유형: brainstorming", brainstorming_prompt)
         self.assertIn("아이디어, 선택지, 질문, 우려사항", brainstorming_prompt)
+        self.assertIn("명시적 수렴, 선택, 채택 표현", brainstorming_prompt)
         self.assertIn("회의 유형: general", general_prompt)
         self.assertIn("핵심 논의 맥락을 균형 있게", general_prompt)
 
@@ -161,17 +164,17 @@ class SummarizeExtractionPolicyTests(unittest.TestCase):
         self.assertTrue(any("실행 약속이 불명확" in warning for warning in result.structure["warnings"]))
 
     def test_apply_extraction_policy_preserves_execution_actions_aggressively(self) -> None:
-        """실행 회의는 운영 후속 작업 후보를 약화시키지 않습니다."""
+        """실행 회의는 근거가 갖춰진 운영 후속 작업 후보를 약화시키지 않습니다."""
         structure = {
             "summary_facts": [],
             "decisions": [],
             "action_items": [
                 {
                     "task": "도입 가능성 검토",
-                    "owner": "미정",
-                    "due_date": "미정",
+                    "owner": "데이터팀",
+                    "due_date": "내일 오전",
                     "confidence": "low",
-                    "source_quote": "도입 가능성을 검토해볼 수 있습니다.",
+                    "source_quote": "도입 가능성은 데이터팀이 내일 오전까지 검토해볼 수 있습니다.",
                 }
             ],
             "speaker_highlights": [],
@@ -183,6 +186,54 @@ class SummarizeExtractionPolicyTests(unittest.TestCase):
         self.assertEqual(result.downgraded_action_count, 0)
         self.assertEqual(result.structure["action_items"], structure["action_items"])
         self.assertEqual(result.structure["summary_facts"], [])
+
+    def test_execution_policy_downgrades_low_confidence_action_without_owner_due_date_or_strong_signal(self) -> None:
+        """실행 회의도 근거가 약한 저신뢰 action 후보는 논의 메모로 낮춥니다."""
+        structure = {
+            "summary_facts": [],
+            "decisions": [],
+            "action_items": [
+                {
+                    "task": "상태 업데이트 검토",
+                    "owner": "미정",
+                    "due_date": "미정",
+                    "confidence": "low",
+                    "source_quote": "현재 상태는 조금 더 봐야 할 것 같습니다.",
+                }
+            ],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+
+        result = summarize.apply_extraction_policy(structure, "execution")
+
+        self.assertEqual(result.downgraded_action_count, 1)
+        self.assertEqual(result.structure["action_items"], [])
+        self.assertIn("논의 메모: 상태 업데이트 검토", result.structure["summary_facts"])
+        self.assertTrue(any("실행 약속이 불명확" in warning for warning in result.structure["warnings"]))
+
+    def test_execution_policy_keeps_low_confidence_action_with_strong_signal(self) -> None:
+        """실행 회의는 강한 실행 신호가 있으면 high-recall 동작을 유지합니다."""
+        structure = {
+            "summary_facts": [],
+            "decisions": [],
+            "action_items": [
+                {
+                    "task": "상태 업데이트 공유",
+                    "owner": "미정",
+                    "due_date": "미정",
+                    "confidence": "low",
+                    "source_quote": "상태 업데이트는 공유해주세요.",
+                }
+            ],
+            "speaker_highlights": [],
+            "warnings": [],
+        }
+
+        result = summarize.apply_extraction_policy(structure, "execution")
+
+        self.assertEqual(result.downgraded_action_count, 0)
+        self.assertEqual(result.structure["action_items"], structure["action_items"])
 
     def test_technical_review_suppresses_conceptual_actions(self) -> None:
         """기술 설명은 개념 설명 residue를 action_item으로 유지하지 않습니다."""

@@ -103,6 +103,11 @@ WEAK_DECISION_PATTERNS = (
     "언급되었다",
     "언급되었습니다",
     "가능성이언급",
+    "가능해보인다",
+    "검토대상",
+    "대안으로언급",
+    "고려해볼수있다",
+    "고려해볼수있습니다",
     "설명했다",
     "설명했습니다",
     "공감대가있었다",
@@ -194,17 +199,20 @@ def build_discussion_emphasis_guidance(policy: ExtractionPolicy) -> list[str]:
     if policy.discussion_emphasis == "customer":
         return [
             "- 고객 요구, 우려사항, 요구사항, 리스크, 후속 논의 주제가 원문에 있으면 요약에서 잘 보이게 반영하세요.",
+            "- 고객 요구사항, 이의제기, 열린 질문, 검증 포인트는 명시적으로 담당자가 정해진 후속 action이 아니면 speaker_highlights에 남기세요.",
             "- 약한 관심 표현이나 탐색적 논의를 확정된 action_item으로 바꾸지 마세요.",
         ]
     if policy.discussion_emphasis == "technical":
         return [
             "- 기술 리뷰에서는 제약 조건, 설계 tradeoff, 리스크, 미해결 질문, 검토 결과를 원문 근거에 맞게 강조하세요.",
             "- 설명, 가능성, 아키텍처 논의는 명확한 합의나 후속 약속이 없으면 논의 맥락으로 다루세요.",
+            "- \"가능해 보인다\", \"검토 대상\", \"대안으로 언급\", \"고려해볼 수 있다\" 수준의 표현은 decision으로 승격하지 말고 speaker_highlights에 남기세요.",
             "- transcript가 뒷받침하는 명확한 follow-up이나 decision은 회의 유형 때문에 제외하지 마세요.",
         ]
     if policy.discussion_emphasis == "ideas":
         return [
             "- 브레인스토밍에서는 아이디어, 선택지, 질문, 우려사항, 탐색적 논의를 원문 근거에 맞게 강조하세요.",
+            "- 아이디어는 명시적 수렴, 선택, 채택 표현이 있을 때만 decision으로 승격하세요.",
             "- 아이디어 논의에서 action_item을 억지로 만들지 마세요.",
             "- 명확한 다음 단계 약속, 담당, 요청, 기한이 있으면 action_item으로 추출하세요.",
             "- 명확한 약속은 회의 유형 때문에 제외하지 마세요.",
@@ -269,11 +277,6 @@ def apply_extraction_policy(structure: dict[str, Any], meeting_type: str | None 
 
 def should_downgrade_action_item(item: dict[str, Any], policy: ExtractionPolicy) -> bool:
     """정책상 action_item으로 보기 약한 후보인지 판단합니다."""
-    if policy.action_threshold == "aggressive":
-        return False
-    if policy.action_threshold != "strict":
-        return False
-
     task = as_text(item.get("task"))
     owner = as_text(item.get("owner"))
     due_date = as_text(item.get("due_date"))
@@ -284,6 +287,11 @@ def should_downgrade_action_item(item: dict[str, Any], policy: ExtractionPolicy)
     has_strong_signal = any(pattern in combined_key for pattern in STRONG_ACTION_PATTERNS)
     owner_missing = is_missing_value(owner)
     due_date_missing = is_missing_value(due_date)
+
+    if policy.action_threshold == "aggressive":
+        return confidence == "low" and owner_missing and due_date_missing and not has_strong_signal
+    if policy.action_threshold != "strict":
+        return False
 
     if has_weak_signal and not has_strong_signal:
         return True
