@@ -62,7 +62,7 @@ const TRANSCRIPTION_MODES: Array<{
     recommended: true
   },
   {
-    description: "OpenAI를 사용하며 비용이 발생할 수 있습니다.",
+    description: "OpenAI API를 사용하며 비용이 발생할 수 있습니다.",
     label: "고급 모드 / OpenAI",
     mode: "openai"
   }
