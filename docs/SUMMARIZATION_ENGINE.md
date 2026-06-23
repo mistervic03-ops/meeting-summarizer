@@ -120,6 +120,8 @@ The model-facing schema returns:
 - `speaker_highlights`
 - `warnings`
 
+The extraction prompt treats plain STT as the default: when a speaker label is absent, action owners must come from names or teams explicitly mentioned in the utterance text, otherwise the owner remains `미정`.
+
 Internally, decisions and action items include:
 
 - `source_quote`

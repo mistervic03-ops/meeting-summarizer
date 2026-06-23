@@ -1591,19 +1591,16 @@ Speaker 1: 배포 확인
         self.assertIn("DWH 적재 로그 확인", prompt)
         self.assertIn("source_quote는 \"미정\"이 아니라 빈 문자열", prompt)
         self.assertIn("삭제하지 말고 confidence를 low", prompt)
-        self.assertIn("speaker label이 있는 발화에서 발화자가 \"제가 하겠습니다\"", prompt)
-        self.assertIn("owner는 \"제가\"나 \"저희\"가 아니라 해당 speaker label", prompt)
-        self.assertIn("owner는 \"영업담당자\"", prompt)
         self.assertIn("speaker label이 없는 plain STT 발화에서는 speaker label로 owner를 추론하지 마세요", prompt)
         self.assertIn("발화 텍스트 안에 명시된 사람/팀 이름만 owner로 사용", prompt)
         self.assertIn("이름 근거가 없으면 owner는 \"미정\"", prompt)
-        self.assertIn("\"Speaker 1\", \"Speaker 2\" 같은 speaker label은 transcript에 실제 source speaker label", prompt)
         self.assertIn("owner가 실제로 \"미정\"일 때만 담당자 확인 warning", prompt)
         self.assertIn("confidence가 low인 항목은 warnings에 추가", prompt)
         self.assertIn("due_date는 \"미정\"으로 두고 warnings에 추가", prompt)
-        self.assertIn("speaker label이 있는 1인칭 발화에서 owner가 speaker label로 해결되면 담당자 확인 warning을 만들지 마세요", prompt)
         self.assertIn("owner에 \"저\", \"제가\", \"저희\" 같은 1인칭 표현 자체를 쓰지 마세요", prompt)
         self.assertIn("owner와 due_date가 둘 다 명확할 때만 \"high\"", prompt)
+        self.assertNotIn("영업담당자: 제가 하고 있는데요", prompt)
+        self.assertNotIn("\"Speaker 1\", \"Speaker 2\" 같은 speaker label", prompt)
         self.assertIn("주요 발언/논의 포인트", prompt)
         self.assertIn("speaker_highlights에는 주요 발언 또는 논의 포인트", prompt)
         self.assertIn("summary_facts에 넣기에는 세부적인 기술 설명, 고객 관심사, 열린 질문, 리스크, 예시, 수치, follow-up 후보", prompt)
@@ -2807,28 +2804,6 @@ Speaker 2: 자료 정리는 제가 진행하겠습니다.
         self.assertEqual(warnings.count("담당자 확인이 필요한 액션 아이템이 있습니다."), 1)
         self.assertFalse(any("u_" in warning.lower() for warning in warnings))
         self.assertFalse(any("추가 확인이 필요할 수 있습니다" == warning for warning in warnings))
-
-    def test_format_display_warnings_drops_internal_owner_inference_leakage(self) -> None:
-        """source ID와 Unknown speaker 기반 내부 추론 설명은 공개 warning에서 숨깁니다."""
-        warnings = summarize.format_display_warnings(
-            [
-                "u_0017에서 1인칭으로 수락했으나 speaker label이 없어 담당자를 특정할 수 없음",
-                "speaker label이 Unknown이어서 담당자를 특정할 수 없음",
-                "u_0080 발화자가 Unknown이라 owner 추론 실패",
-                "Unknown speaker라 1인칭으로 수락했으나 담당자 추론 실패",
-                "KT 데모 일정 조율 결과에 따라 대응 방안 검토 필요",
-                "QA 일정 지연 리스크가 있어 일정 확인 필요",
-                "배포 확인: 원문 근거 확인 필요",
-            ]
-        )
-
-        self.assertIn("KT 데모 일정 조율 결과에 따라 대응 방안 검토 필요", warnings)
-        self.assertIn("QA 일정 지연 리스크가 있어 일정 확인 필요", warnings)
-        self.assertIn("배포 확인: 원문 근거 확인 필요", warnings)
-        self.assertFalse(any("u_" in warning.lower() for warning in warnings))
-        self.assertFalse(any("unknown" in warning.lower() for warning in warnings))
-        self.assertFalse(any("speaker label" in warning.lower() for warning in warnings))
-        self.assertFalse(any("1인칭으로 수락" in warning for warning in warnings))
 
     def test_format_display_warnings_polishes_overly_generic_subjects(self) -> None:
         """너무 넓은 주어는 구체 task가 아니라 일반 warning으로 접습니다."""

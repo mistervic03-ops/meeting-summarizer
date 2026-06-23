@@ -96,11 +96,8 @@ def build_extraction_prompt(
 - action_items의 task는 5~20자 내외의 짧은 업무명으로 작성하세요.
 - action_items의 task에 담당자 이름, 기한, 원문 문장 전체를 넣지 마세요.
 - 담당자, 기한, 원문 근거는 owner, due_date, source_quote 필드로 각각 분리하세요.
-- speaker label이 있는 발화에서 발화자가 "제가 하겠습니다", "제가 하고 있습니다", "제가 할게요", "저희가 하겠습니다"처럼 1인칭으로 업무 수행을 말하면 owner는 "제가"나 "저희"가 아니라 해당 speaker label로 설정하세요.
-- 예: "[u_0013] 영업담당자: 제가 하고 있는데요."라면 owner는 "영업담당자"입니다.
 - speaker label이 없는 plain STT 발화에서는 speaker label로 owner를 추론하지 마세요.
 - speaker label이 없으면 발화 텍스트 안에 명시된 사람/팀 이름만 owner로 사용하고, 이름 근거가 없으면 owner는 "미정"으로 두세요.
-- "Speaker 1", "Speaker 2" 같은 speaker label은 transcript에 실제 source speaker label로 나타난 경우에만 owner로 사용할 수 있습니다.
 - speaker label 없이 owner를 알 수 없을 때만 owner를 "미정"으로 두세요.
 - action_items의 source_quote에는 transcript에 실제로 나온 짧은 근거 문장을 원문에 가깝게 넣으세요.
 - action_items의 source_quote는 요약하거나 재작성하지 말고 transcript의 실제 발화 일부를 그대로 복사하세요.
@@ -118,7 +115,6 @@ def build_extraction_prompt(
 - confidence가 low인 항목은 warnings에 추가하세요.
 - 기한이 없거나 불명확하면 due_date는 "미정"으로 두고 warnings에 추가하세요.
 - 기한이 원문에 상대 표현으로 나오면 due_date에도 원문 표현을 유지하세요. 확실하지 않은 날짜 계산으로 새 날짜를 만들지 마세요.
-- speaker label이 있는 1인칭 발화에서 owner가 speaker label로 해결되면 담당자 확인 warning을 만들지 마세요.
 - owner에 "저", "제가", "저희" 같은 1인칭 표현 자체를 쓰지 마세요.
 - confidence는 owner와 due_date가 둘 다 명확할 때만 "high", 하나라도 없으면 "low"로 두세요.
 - speaker_highlights에는 주요 발언 또는 논의 포인트를 넣으세요.
