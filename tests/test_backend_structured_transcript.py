@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -217,6 +218,66 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
             self.assertIsNone(rows[0]["error"])
         finally:
             connection.close()
+
+    def test_delete_meeting_record_removes_row_and_artifact_files(self) -> None:
+        """meeting 삭제는 세션 소유권을 확인하고 연결된 artifact 파일을 제거합니다."""
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute(
+            """
+            CREATE TABLE meetings(
+                id TEXT PRIMARY KEY,
+                session_id TEXT,
+                title TEXT,
+                status TEXT,
+                created_at TEXT,
+                expires_at TEXT,
+                transcript_path TEXT,
+                summary_path TEXT,
+                error TEXT
+            )
+            """
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            artifact_dir = Path(temp_dir) / "meeting"
+            artifact_dir.mkdir()
+            transcript_path = artifact_dir / "transcript.txt"
+            summary_path = artifact_dir / "summary.txt"
+            transcript_path.write_text("transcript", encoding="utf-8")
+            summary_path.write_text("summary", encoding="utf-8")
+            connection.execute(
+                """
+                INSERT INTO meetings(id, session_id, title, status, created_at, expires_at, transcript_path, summary_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "meeting-id",
+                    "session-id",
+                    "meeting.wav",
+                    "completed",
+                    "created",
+                    "expires",
+                    str(transcript_path),
+                    str(summary_path),
+                ),
+            )
+
+            try:
+                with patch("backend.api.routes.get_db_connection", return_value=connection):
+                    self.assertIsNone(routes.delete_meeting_record("meeting-id", "other-session"))
+                    artifact_paths = routes.delete_meeting_record("meeting-id", "session-id")
+
+                self.assertEqual(artifact_paths, (str(transcript_path), str(summary_path)))
+                self.assertIsNone(connection.execute("SELECT id FROM meetings WHERE id = ?", ("meeting-id",)).fetchone())
+
+                routes.remove_text_artifacts(*artifact_paths)
+
+                self.assertFalse(transcript_path.exists())
+                self.assertFalse(summary_path.exists())
+                self.assertFalse(artifact_dir.exists())
+            finally:
+                connection.close()
 
     def test_backend_pipeline_builds_normalized_transcript_from_structured_payload(self) -> None:
         """backend pipeline helper는 structured payload를 내부 NormalizedTranscript로 바꿉니다."""

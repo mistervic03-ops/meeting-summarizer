@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, FileText, Loader2, RotateCcw } from "lucide-react";
+import { ArrowLeft, FileText, Loader2, RotateCcw, Trash2 } from "lucide-react";
 import MinutesTab from "../components/MinutesTab";
 import ThemeToggle from "../components/ThemeToggle";
 
@@ -36,6 +36,7 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
   const [listState, setListState] = useState<LoadState>("idle");
   const [detailState, setDetailState] = useState<LoadState>("idle");
   const [error, setError] = useState("");
+  const [deletingMeetingId, setDeletingMeetingId] = useState("");
 
   useEffect(() => {
     void loadMeetings();
@@ -81,6 +82,32 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
     } catch (caughtError) {
       setDetailState("failed");
       setError(caughtError instanceof Error ? caughtError.message : "회의록 내용을 불러오지 못했습니다.");
+    }
+  }
+
+  async function deleteMeeting(meeting: MeetingListItem) {
+    const title = meeting.title || "회의록";
+    if (!window.confirm(`'${title}' 회의록을 삭제할까요?`)) {
+      return;
+    }
+
+    setError("");
+    setDeletingMeetingId(meeting.id);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/meetings/${meeting.id}`, {
+        credentials: "include",
+        method: "DELETE"
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response));
+      }
+
+      await loadMeetings();
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "회의록을 삭제하지 못했습니다.");
+    } finally {
+      setDeletingMeetingId("");
     }
   }
 
@@ -190,24 +217,37 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
           ) : (
             <div className="divide-y divide-slate-200 border-y border-slate-300">
               {meetings.map((meeting) => (
-                <button
+                <div
                   key={meeting.id}
-                  className="grid w-full gap-1 px-1 py-3 text-left transition-colors duration-150 ease-out hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-wait disabled:opacity-70 dark:hover:bg-app-hover"
-                  disabled={detailState === "loading"}
-                  type="button"
-                  onClick={() => void loadMeetingDetail(meeting.id)}
+                  className="flex items-start gap-2 px-1 py-3 transition-colors duration-150 ease-out hover:bg-slate-50 dark:hover:bg-app-hover"
                 >
-                  <span className="break-words text-[13px] font-semibold text-slate-950">{meeting.title || "회의록"}</span>
-                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-slate-500">
-                    <span>{getStatusLabel(meeting.status)}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{formatDateTime(meeting.created_at)}</span>
-                  </span>
-                  {getDeletionLabel(meeting.expires_at) ? (
-                    <span className="text-[11px] font-medium text-slate-400">{getDeletionLabel(meeting.expires_at)}</span>
-                  ) : null}
-                  {meeting.error ? <span className="break-words text-[11px] font-medium text-red-700">{meeting.error}</span> : null}
-                </button>
+                  <button
+                    className="grid min-w-0 flex-1 gap-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-wait disabled:opacity-70"
+                    disabled={detailState === "loading" || deletingMeetingId === meeting.id}
+                    type="button"
+                    onClick={() => void loadMeetingDetail(meeting.id)}
+                  >
+                    <span className="break-words text-[13px] font-semibold text-slate-950">{meeting.title || "회의록"}</span>
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-slate-500">
+                      <span>{getStatusLabel(meeting.status)}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{formatDateTime(meeting.created_at)}</span>
+                    </span>
+                    {getDeletionLabel(meeting.expires_at) ? (
+                      <span className="text-[11px] font-medium text-slate-400">{getDeletionLabel(meeting.expires_at)}</span>
+                    ) : null}
+                    {meeting.error ? <span className="break-words text-[11px] font-medium text-red-700">{meeting.error}</span> : null}
+                  </button>
+                  <button
+                    aria-label={`${meeting.title || "회의록"} 삭제`}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 transition-colors duration-150 ease-out hover:border-red-200 hover:bg-red-50 hover:text-red-700 focus-visible:border-red-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-100 disabled:cursor-wait disabled:opacity-60 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-red-300"
+                    disabled={deletingMeetingId === meeting.id}
+                    type="button"
+                    onClick={() => void deleteMeeting(meeting)}
+                  >
+                    {deletingMeetingId === meeting.id ? <Loader2 className="animate-spin" size={13} /> : <Trash2 size={13} />}
+                  </button>
+                </div>
               ))}
             </div>
           )}

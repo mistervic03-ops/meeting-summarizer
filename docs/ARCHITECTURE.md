@@ -88,6 +88,7 @@ This document describes the current repository structure and production data flo
 - Result UI entry: `frontend/src/pages/ResultPage.tsx`.
 - Result tabs/components live under `frontend/src/components/`.
 - Download endpoint: `backend/api/routes.py:download_minutes()` serves `GET /api/jobs/{job_id}/download`.
+- History deletion: `frontend/src/pages/HistoryPage.tsx` calls `DELETE /api/meetings/{meeting_id}` to remove a saved meeting row and its transcript/summary artifacts for the current session.
 - Frontend export helpers are in `frontend/src/utils/exportDocument.ts`.
 
 ## Direct Text Upload Flow

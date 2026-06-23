@@ -146,6 +146,18 @@ def get_meeting(meeting_id: str, request: Request, response: Response) -> dict[s
     }
 
 
+@router.delete("/meetings/{meeting_id}", status_code=204)
+def delete_meeting(meeting_id: str, request: Request, response: Response) -> Response:
+    """현재 세션에 속한 저장 회의 row와 artifact 파일을 삭제합니다."""
+    session_id = get_or_create_session(request, response)
+    artifact_paths = delete_meeting_record(meeting_id, session_id)
+    if artifact_paths is None:
+        raise HTTPException(status_code=404, detail="회의를 찾을 수 없습니다.")
+
+    remove_text_artifacts(*artifact_paths)
+    return Response(status_code=204)
+
+
 @router.get("/jobs/{job_id}/transcript", response_model=TranscriptResultResponse)
 def get_transcription_result(job_id: str) -> TranscriptResultResponse:
     """STT 완료 작업의 transcript와 팀 컨텍스트를 반환합니다."""
@@ -237,6 +249,30 @@ def mark_meeting_failed(job_id: str, error: str) -> None:
         )
 
 
+def delete_meeting_record(meeting_id: str, session_id: str) -> tuple[object, object] | None:
+    """현재 세션의 meeting row를 삭제하고 artifact 경로를 반환합니다."""
+    with get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT transcript_path, summary_path
+            FROM meetings
+            WHERE id = ? AND session_id = ?
+            """,
+            (meeting_id, session_id),
+        ).fetchone()
+        if row is None:
+            return None
+
+        connection.execute(
+            """
+            DELETE FROM meetings
+            WHERE id = ? AND session_id = ?
+            """,
+            (meeting_id, session_id),
+        )
+    return row["transcript_path"], row["summary_path"]
+
+
 def read_text_artifact(raw_path: object) -> str:
     """artifact 경로가 있으면 텍스트 내용을 읽고 없으면 빈 문자열을 반환합니다."""
     if not isinstance(raw_path, str) or not raw_path:
@@ -245,6 +281,28 @@ def read_text_artifact(raw_path: object) -> str:
     if not path.exists() or not path.is_file():
         return ""
     return path.read_text(encoding="utf-8")
+
+
+def remove_text_artifacts(*raw_paths: object) -> None:
+    """meeting row에 연결된 artifact 파일을 삭제합니다."""
+    parent_dirs: set[Path] = set()
+    for raw_path in raw_paths:
+        if not isinstance(raw_path, str) or not raw_path:
+            continue
+        path = Path(raw_path)
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            path.unlink()
+            parent_dirs.add(path.parent)
+        except OSError:
+            continue
+
+    for parent_dir in parent_dirs:
+        try:
+            parent_dir.rmdir()
+        except OSError:
+            continue
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
