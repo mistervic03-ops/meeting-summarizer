@@ -106,11 +106,11 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:pt-1">
               <button
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:bg-app-surface"
+                className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
                 type="button"
                 onClick={handleBackToList}
               >
-                <ArrowLeft size={15} />
+                <ArrowLeft size={13} />
                 목록
               </button>
               <ThemeToggle />
@@ -149,11 +149,11 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:pt-1">
             <button
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:bg-app-surface"
+              className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
               type="button"
               onClick={onBack}
             >
-              <ArrowLeft size={15} />
+              <ArrowLeft size={13} />
               업로드
             </button>
             <ThemeToggle />
@@ -164,12 +164,12 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-[13px] font-semibold text-slate-950">목록</h2>
             <button
-              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-80 dark:bg-app-surface"
+              className="inline-flex h-7 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-80 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
               disabled={listState === "loading"}
               type="button"
               onClick={() => void loadMeetings()}
             >
-              {listState === "loading" ? <Loader2 className="animate-spin" size={14} /> : <RotateCcw size={14} />}
+              {listState === "loading" ? <Loader2 className="animate-spin" size={13} /> : <RotateCcw size={13} />}
               새로고침
             </button>
           </div>
