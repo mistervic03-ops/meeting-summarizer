@@ -6,7 +6,7 @@ from summarization.models import NormalizedTranscript, TranscriptChunk, Transcri
 
 
 def build_chunk_text(utterances: list[TranscriptUtterance]) -> str:
-    """발화 목록을 LLM 입력용 ID/화자 보존 텍스트로 변환합니다."""
+    """발화 목록을 LLM 입력용 ID 보존 텍스트로 변환합니다."""
     lines = [utterance.render_for_llm() for utterance in utterances]
     return "\n".join(lines).strip()
 

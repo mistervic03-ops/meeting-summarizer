@@ -14,9 +14,8 @@ DEEP_STRATEGY: ProcessingStrategy = "deep"
 
 @dataclass(frozen=True)
 class Utterance:
-    """화자 정보가 있을 수 있는 파싱된 transcript 발화입니다."""
+    """파싱된 transcript 발화입니다."""
 
-    speaker: str | None
     text: str
 
 
@@ -25,7 +24,6 @@ class TranscriptUtterance:
     """안정적인 원문 메타데이터를 가진 정규화된 transcript 발화입니다."""
 
     utterance_id: str
-    speaker: str | None
     text: str
     index: int
     raw_line: str
@@ -33,9 +31,8 @@ class TranscriptUtterance:
     end_ms: int | None = None
 
     def render_for_llm(self) -> str:
-        """LLM 입력에서 발화 ID와 화자 정보를 보존한 한 줄 문자열을 반환합니다."""
-        speaker_label = self.speaker or "Unknown"
-        return f"[{self.utterance_id}] {speaker_label}: {self.text}"
+        """LLM 입력에서 발화 ID를 보존한 한 줄 문자열을 반환합니다."""
+        return f"[{self.utterance_id}] {self.text}"
 
 
 @dataclass(frozen=True)
@@ -55,7 +52,7 @@ class NormalizedTranscript:
     meeting_date: str
 
     def render_for_llm(self) -> str:
-        """LLM 입력에서 발화 ID와 화자 정보를 보존한 transcript 문자열을 반환합니다."""
+        """LLM 입력에서 발화 ID를 보존한 transcript 문자열을 반환합니다."""
         return "\n".join(utterance.render_for_llm() for utterance in self.utterances).strip()
 
 
@@ -78,7 +75,6 @@ class TranscriptProfile:
 
     char_count: int
     utterance_count: int
-    speaker_count: int
     action_cue_count: int
     decision_cue_count: int
     risk_cue_count: int

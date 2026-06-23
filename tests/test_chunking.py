@@ -62,15 +62,14 @@ class TranscriptChunkingFixtureTests(unittest.TestCase):
         self.assertEqual(chunks[0].chunk_id, "c_0001")
         self.assertEqual(chunks[0].utterances, normalized.utterances)
 
-    def test_long_fixture_is_chunk_strategy_candidate(self) -> None:
-        """긴 fixture는 실제 profiling 기준으로 chunk mode 대상입니다."""
+    def test_long_fixture_is_deep_strategy_candidate(self) -> None:
+        """cue가 매우 많은 fixture는 실제 profiling 기준으로 deep mode 대상입니다."""
         from summarization.profiling import analyze_transcript_profile, choose_processing_strategy
 
         profile = analyze_transcript_profile(normalize_fixture("long_action_heavy_meeting.txt"))
 
         self.assertEqual(profile.utterance_count, 207)
-        self.assertEqual(profile.speaker_count, 6)
-        self.assertEqual(choose_processing_strategy(profile), "chunk")
+        self.assertEqual(choose_processing_strategy(profile), "deep")
 
     def test_extract_structure_by_chunks_extracts_each_chunk_and_merges_without_validation(self) -> None:
         """chunk runner는 chunk별 extract 후 merge하며 validate_structure를 호출하지 않습니다."""
@@ -95,8 +94,10 @@ class TranscriptChunkingFixtureTests(unittest.TestCase):
 
         self.assertEqual(result, merged_structure)
         self.assertEqual(extract_mock.call_count, len(expected_chunks))
-        for chunk, call in zip(expected_chunks, extract_mock.call_args_list):
-            self.assertEqual(call.args, (chunk.text, "2026-05-15", "fixture test"))
+        self.assertCountEqual(
+            [call.args for call in extract_mock.call_args_list],
+            [(chunk.text, "2026-05-15", "fixture test") for chunk in expected_chunks],
+        )
         merge_mock.assert_called_once()
         self.assertEqual(len(merge_mock.call_args.args[0]), len(expected_chunks))
         validate_mock.assert_not_called()

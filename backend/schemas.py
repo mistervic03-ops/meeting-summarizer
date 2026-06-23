@@ -20,22 +20,6 @@ class JobCreateResponse(BaseModel):
     status: JobStatus
 
 
-class TranscriptUtterancePayload(BaseModel):
-    """speaker-aware transcript의 단일 발화 payload입니다."""
-
-    utterance_id: Optional[str] = None
-    speaker: Optional[str] = None
-    text: str
-    start_ms: Optional[int] = None
-    end_ms: Optional[int] = None
-
-
-class StructuredTranscriptPayload(BaseModel):
-    """speaker-aware transcript payload입니다."""
-
-    utterances: list[TranscriptUtterancePayload]
-
-
 class TranscriptJobRequest(BaseModel):
     """검토 또는 수정된 transcript로 회의록 생성을 시작하는 요청 모델입니다."""
 
@@ -43,7 +27,7 @@ class TranscriptJobRequest(BaseModel):
     transcript: str
     context: str = ""
     meeting_type: MeetingType = "general"
-    structured_transcript: Optional[StructuredTranscriptPayload] = None
+    transcription_job_id: Optional[str] = None
 
 
 class TranscriptResultResponse(BaseModel):
@@ -55,7 +39,6 @@ class TranscriptResultResponse(BaseModel):
     transcript: str
     context: str = ""
     stt_seconds: Optional[float] = None
-    structured_transcript: Optional[StructuredTranscriptPayload] = None
 
 
 class JobStatusResponse(BaseModel):

@@ -30,19 +30,16 @@ def analyze_transcript_profile(normalized: NormalizedTranscript) -> TranscriptPr
     requirement_cue_count = sum(
         count_cues_in_text(utterance.text, REQUIREMENT_CUES) for utterance in normalized.utterances
     )
-    speaker_count = len({utterance.speaker for utterance in normalized.utterances if utterance.speaker})
     cue_count = action_cue_count + decision_cue_count + risk_cue_count + requirement_cue_count
     complexity = estimate_transcript_complexity(
         char_count=len(normalized.text),
         utterance_count=len(normalized.utterances),
-        speaker_count=speaker_count,
         cue_count=cue_count,
     )
 
     return TranscriptProfile(
         char_count=len(normalized.text),
         utterance_count=len(normalized.utterances),
-        speaker_count=speaker_count,
         action_cue_count=action_cue_count,
         decision_cue_count=decision_cue_count,
         risk_cue_count=risk_cue_count,
@@ -60,13 +57,12 @@ def count_cues_in_text(text: str, cues: tuple[str, ...]) -> int:
 def estimate_transcript_complexity(
     char_count: int,
     utterance_count: int,
-    speaker_count: int,
     cue_count: int,
 ) -> str:
     """의도적으로 단순한 기준으로 전사문 복잡도를 추정합니다."""
-    if char_count >= 20000 or utterance_count >= 160 or speaker_count >= 10 or cue_count >= 90:
+    if char_count >= 20000 or utterance_count >= 160 or cue_count >= 90:
         return "complex"
-    if char_count >= 7000 or utterance_count >= 60 or speaker_count >= 6 or cue_count >= 25:
+    if char_count >= 7000 or utterance_count >= 60 or cue_count >= 25:
         return "standard"
     return "simple"
 
@@ -79,20 +75,11 @@ def choose_processing_strategy(profile: TranscriptProfile) -> ProcessingStrategy
         + profile.risk_cue_count
         + profile.requirement_cue_count
     )
-    cue_density = total_cue_count / max(profile.utterance_count, 1)
+    cue_density = total_cue_count / max(profile.char_count / 1000, 1)
 
-    if (
-        profile.char_count >= 30000
-        or profile.utterance_count >= 220
-        or (profile.speaker_count >= 10 and total_cue_count >= 100)
-    ):
+    if profile.char_count >= 120000 or total_cue_count >= 120:
         return DEEP_STRATEGY
-    if (
-        profile.char_count >= 8000
-        or profile.utterance_count >= 70
-        or profile.estimated_complexity == "complex"
-        or (total_cue_count >= 30 and cue_density >= 1.5)
-    ):
+    if profile.char_count >= 60000 or total_cue_count >= 30:
         return CHUNK_STRATEGY
     return DIRECT_STRATEGY
 
@@ -100,12 +87,11 @@ def choose_processing_strategy(profile: TranscriptProfile) -> ProcessingStrategy
 def log_transcript_profile(profile: TranscriptProfile, selected_strategy: ProcessingStrategy) -> None:
     """실행 흐름을 바꾸지 않고 전사문 프로필과 선택된 향후 전략을 로그로 남깁니다."""
     logger.info(
-        "transcript_profile char_count=%s utterance_count=%s speaker_count=%s "
+        "transcript_profile char_count=%s utterance_count=%s "
         "action_cue_count=%s decision_cue_count=%s risk_cue_count=%s "
         "requirement_cue_count=%s estimated_complexity=%s selected_strategy=%s",
         profile.char_count,
         profile.utterance_count,
-        profile.speaker_count,
         profile.action_cue_count,
         profile.decision_cue_count,
         profile.risk_cue_count,

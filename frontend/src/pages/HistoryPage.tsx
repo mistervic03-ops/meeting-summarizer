@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, FileText, Loader2, RotateCcw } from "lucide-react";
+import { ArrowLeft, FileText, Loader2, RotateCcw, Trash2 } from "lucide-react";
 import MinutesTab from "../components/MinutesTab";
 import ThemeToggle from "../components/ThemeToggle";
 
@@ -36,6 +36,7 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
   const [listState, setListState] = useState<LoadState>("idle");
   const [detailState, setDetailState] = useState<LoadState>("idle");
   const [error, setError] = useState("");
+  const [deletingMeetingId, setDeletingMeetingId] = useState("");
 
   useEffect(() => {
     void loadMeetings();
@@ -84,6 +85,32 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
     }
   }
 
+  async function deleteMeeting(meeting: MeetingListItem) {
+    const title = meeting.title || "회의록";
+    if (!window.confirm(`'${title}' 회의록을 삭제할까요?`)) {
+      return;
+    }
+
+    setError("");
+    setDeletingMeetingId(meeting.id);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/meetings/${meeting.id}`, {
+        credentials: "include",
+        method: "DELETE"
+      });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response));
+      }
+
+      await loadMeetings();
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "회의록을 삭제하지 못했습니다.");
+    } finally {
+      setDeletingMeetingId("");
+    }
+  }
+
   function handleBackToList() {
     setSelectedMeeting(null);
     setDetailState("idle");
@@ -106,11 +133,11 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:pt-1">
               <button
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:bg-app-surface"
+                className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
                 type="button"
                 onClick={handleBackToList}
               >
-                <ArrowLeft size={15} />
+                <ArrowLeft size={13} />
                 목록
               </button>
               <ThemeToggle />
@@ -144,16 +171,16 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
             <p className="text-[10px] font-medium tracking-[0.04em] text-brand-700 dark:text-app-accent">BIGXDATA · 저장된 회의</p>
             <h1 className="mt-1.5 text-[30px] font-semibold leading-[1.12] tracking-normal text-slate-950">지난 회의록</h1>
             <p className="mt-1.5 max-w-2xl text-[12px] leading-5 text-slate-500">
-              이 브라우저 세션에 저장된 회의 내용을 확인합니다.
+              같은 브라우저에서 처리한 회의록을 7일간 보관합니다.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:pt-1">
             <button
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:bg-app-surface"
+              className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
               type="button"
               onClick={onBack}
             >
-              <ArrowLeft size={15} />
+              <ArrowLeft size={13} />
               업로드
             </button>
             <ThemeToggle />
@@ -164,12 +191,12 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
           <div className="mb-3 flex items-center justify-between gap-3">
             <h2 className="text-[13px] font-semibold text-slate-950">목록</h2>
             <button
-              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-80 dark:bg-app-surface"
+              className="inline-flex h-7 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-80 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
               disabled={listState === "loading"}
               type="button"
               onClick={() => void loadMeetings()}
             >
-              {listState === "loading" ? <Loader2 className="animate-spin" size={14} /> : <RotateCcw size={14} />}
+              {listState === "loading" ? <Loader2 className="animate-spin" size={13} /> : <RotateCcw size={13} />}
               새로고침
             </button>
           </div>
@@ -190,21 +217,37 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
           ) : (
             <div className="divide-y divide-slate-200 border-y border-slate-300">
               {meetings.map((meeting) => (
-                <button
+                <div
                   key={meeting.id}
-                  className="grid w-full gap-1 px-1 py-3 text-left transition-colors duration-150 ease-out hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-wait disabled:opacity-70 dark:hover:bg-app-hover"
-                  disabled={detailState === "loading"}
-                  type="button"
-                  onClick={() => void loadMeetingDetail(meeting.id)}
+                  className="flex items-start gap-2 px-1 py-3 transition-colors duration-150 ease-out hover:bg-slate-50 dark:hover:bg-app-hover"
                 >
-                  <span className="break-words text-[13px] font-semibold text-slate-950">{meeting.title || "회의록"}</span>
-                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-slate-500">
-                    <span>{getStatusLabel(meeting.status)}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{formatDateTime(meeting.created_at)}</span>
-                  </span>
-                  {meeting.error ? <span className="break-words text-[11px] font-medium text-red-700">{meeting.error}</span> : null}
-                </button>
+                  <button
+                    className="grid min-w-0 flex-1 gap-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-wait disabled:opacity-70"
+                    disabled={detailState === "loading" || deletingMeetingId === meeting.id}
+                    type="button"
+                    onClick={() => void loadMeetingDetail(meeting.id)}
+                  >
+                    <span className="break-words text-[13px] font-semibold text-slate-950">{meeting.title || "회의록"}</span>
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-medium text-slate-500">
+                      <span>{getStatusLabel(meeting.status)}</span>
+                      <span aria-hidden="true">·</span>
+                      <span>{formatDateTime(meeting.created_at)}</span>
+                    </span>
+                    {getDeletionLabel(meeting.expires_at) ? (
+                      <span className="text-[11px] font-medium text-slate-400">{getDeletionLabel(meeting.expires_at)}</span>
+                    ) : null}
+                    {meeting.error ? <span className="break-words text-[11px] font-medium text-red-700">{meeting.error}</span> : null}
+                  </button>
+                  <button
+                    aria-label={`${meeting.title || "회의록"} 삭제`}
+                    className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-400 transition-colors duration-150 ease-out hover:border-red-200 hover:bg-red-50 hover:text-red-700 focus-visible:border-red-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-100 disabled:cursor-wait disabled:opacity-60 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-red-300"
+                    disabled={deletingMeetingId === meeting.id}
+                    type="button"
+                    onClick={() => void deleteMeeting(meeting)}
+                  >
+                    {deletingMeetingId === meeting.id ? <Loader2 className="animate-spin" size={13} /> : <Trash2 size={13} />}
+                  </button>
+                </div>
               ))}
             </div>
           )}
@@ -249,4 +292,19 @@ function getStatusLabel(status: string): string {
     return "대기 중";
   }
   return status || "상태 없음";
+}
+
+function getDeletionLabel(expiresAt: string | null | undefined): string {
+  if (!expiresAt) {
+    return "";
+  }
+
+  const expiresAtDate = new Date(expiresAt);
+  if (Number.isNaN(expiresAtDate.getTime())) {
+    return "";
+  }
+
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+  const daysRemaining = Math.max(0, Math.floor((expiresAtDate.getTime() - Date.now()) / millisecondsPerDay));
+  return daysRemaining === 0 ? "오늘 삭제 예정" : `${daysRemaining}일 후 삭제`;
 }

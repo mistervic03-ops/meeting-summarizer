@@ -23,12 +23,10 @@ from summarization.normalization import (
     DATE_PATTERNS,
     FILLER_TOKENS,
     KOREAN_MONTH_DAY_PATTERN,
-    SPEAKER_LINE_PATTERN,
     build_iso_date,
     extract_meeting_date,
     normalize_transcript,
     preprocess_transcript,
-    structured_transcript_payload_to_normalized_transcript,
 )
 from summarization.openai_utils import (
     DEFAULT_STRUCTURE_MODEL,

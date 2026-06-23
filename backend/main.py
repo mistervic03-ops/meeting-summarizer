@@ -1,6 +1,8 @@
 """회의록 생성 API 서버의 FastAPI 진입점입니다."""
 
+import logging
 import os
+import sys
 import threading
 import time
 
@@ -24,6 +26,7 @@ _cleanup_thread_started = False
 def create_app() -> FastAPI:
     """FastAPI 앱을 생성하고 공통 미들웨어와 라우터를 연결합니다."""
     load_dotenv()
+    configure_summarization_logging()
     init_db()
     start_cleanup_scheduler()
     app = FastAPI(
@@ -72,6 +75,20 @@ def get_cors_origins() -> list[str]:
 
     origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
     return origins or DEFAULT_CORS_ORIGINS
+
+
+def configure_summarization_logging() -> None:
+    """요약 pipeline timing/strategy INFO 로그를 컨테이너 stdout으로 보냅니다."""
+    logger = logging.getLogger("summarize")
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    if logger.handlers:
+        return
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    logger.addHandler(handler)
 
 
 app = create_app()

@@ -6,6 +6,7 @@ import StatusPill from "../components/StatusPill";
 import ThemeToggle from "../components/ThemeToggle";
 import ContextHelp from "../components/ui/ContextHelp";
 import { useMeetingJob } from "../hooks/useMeetingJob";
+import { usePrecomputedSummary } from "../hooks/usePrecomputedSummary";
 import type { MeetingType, SttProviderMode } from "../api/types";
 import { DEFAULT_MEETING_TYPE, MEETING_TYPE_OPTIONS, getMeetingTypeLabel } from "../utils/meetingTypes";
 import ResultPage from "./ResultPage";
@@ -39,13 +40,12 @@ const INPUT_MODES: Array<{
 ];
 const TRANSCRIPTION_PROGRESS_STEPS = [
   { label: "업로드 준비", progress: 10 },
-  { label: "음성 분석 준비", progress: 20 },
-  { label: "음성 변환", progress: 85 },
+  { label: "음성 변환", progress: 80 },
   { label: "결과 정리", progress: 100 }
 ];
 const SUMMARY_PROGRESS_STEPS = [
-  { label: "내용 확인", progress: 55 },
-  { label: "회의 요약 생성", progress: 90 },
+  { label: "검토 완료", progress: 15 },
+  { label: "회의 요약 생성", progress: 88 },
   { label: "결과 정리", progress: 100 }
 ];
 
@@ -96,6 +96,13 @@ export default function UploadPage({ onShowHistory }: UploadPageProps) {
   const canProcess =
     !isBusy &&
     (inputMode === "audio" ? Boolean(audioFile) : Boolean(transcriptText.trim()));
+  const reviewContext = transcriptResult?.context ?? buildMeetingContext(contextText);
+  const reviewMeetingType = transcriptResult?.meeting_type ?? meetingType;
+  const precomputedSummary = usePrecomputedSummary({
+    context: reviewContext,
+    meetingType: reviewMeetingType,
+    transcriptResult
+  });
 
   useEffect(() => {
     if (!transcriptFile) {
@@ -145,10 +152,10 @@ export default function UploadPage({ onShowHistory }: UploadPageProps) {
   if (transcriptResult) {
     return (
       <TranscriptPage
-        context={transcriptResult.context ?? ""}
+        context={reviewContext}
         filename={transcriptResult.filename}
-        meetingType={transcriptResult.meeting_type ?? meetingType}
-        structuredTranscript={transcriptResult.structured_transcript ?? null}
+        meetingType={reviewMeetingType}
+        precomputedSummary={precomputedSummary}
         transcript={transcriptResult.transcript}
         onBack={() => {
           resetJobState();
@@ -184,16 +191,16 @@ export default function UploadPage({ onShowHistory }: UploadPageProps) {
             </p>
           </div>
           <div className="flex items-center gap-2 sm:pt-1">
+            <ThemeToggle />
             <button
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-80 dark:bg-app-surface"
+              className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:opacity-80 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
               disabled={isBusy}
               type="button"
               onClick={onShowHistory}
             >
-              <FileText size={15} />
+              <FileText size={13} />
               지난 회의록
             </button>
-            <ThemeToggle />
             <StatusPill status={status} />
           </div>
         </header>

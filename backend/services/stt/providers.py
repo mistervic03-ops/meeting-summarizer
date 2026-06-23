@@ -7,11 +7,9 @@ import time
 import logging
 from pathlib import Path
 from threading import Lock
-from typing import Any, Callable, Literal, Protocol
+from typing import Any, Callable, Protocol
 
-from summarization.models import NormalizedTranscript
 
-TranscriptionMode = Literal["plain", "diarized"]
 ChunkProgressCallback = Callable[[int, int], None]
 logger = logging.getLogger(__name__)
 
@@ -29,9 +27,8 @@ class TranscribeProvider(Protocol):
     def transcribe(
         self,
         audio_files: Path | list[Path],
-        mode: TranscriptionMode = "plain",
         progress_callback: ChunkProgressCallback | None = None,
-    ) -> str | NormalizedTranscript:
+    ) -> str:
         """오디오 파일을 받아 기존 transcript 반환 형태로 전사합니다."""
 
 
@@ -42,7 +39,7 @@ class OpenAITranscribeProvider:
 
     def __init__(
         self,
-        implementation: Callable[[Path | list[Path], TranscriptionMode, ChunkProgressCallback | None], str | NormalizedTranscript],
+        implementation: Callable[..., str],
     ) -> None:
         """기존 OpenAI 구현 함수를 provider에 연결합니다."""
         self.implementation = implementation
@@ -50,11 +47,10 @@ class OpenAITranscribeProvider:
     def transcribe(
         self,
         audio_files: Path | list[Path],
-        mode: TranscriptionMode = "plain",
         progress_callback: ChunkProgressCallback | None = None,
-    ) -> str | NormalizedTranscript:
+    ) -> str:
         """현재 transcribe.py의 OpenAI chunk/retry workflow를 그대로 실행합니다."""
-        return self.implementation(audio_files, mode=mode, progress_callback=progress_callback)
+        return self.implementation(audio_files, progress_callback=progress_callback)
 
 
 class LocalWhisperProvider:
@@ -67,13 +63,9 @@ class LocalWhisperProvider:
     def transcribe(
         self,
         audio_files: Path | list[Path],
-        mode: TranscriptionMode = "plain",
         progress_callback: ChunkProgressCallback | None = None,
-    ) -> str | NormalizedTranscript:
+    ) -> str:
         """faster-whisper 로컬 모델로 plain transcript를 반환합니다."""
-        if mode != "plain":
-            raise NotImplementedError("STT_PROVIDER=local_whisper only supports plain transcription for now.")
-
         model_name = get_local_whisper_model_name()
         device = get_local_whisper_device()
         compute_type = get_local_whisper_compute_type()
@@ -155,13 +147,9 @@ class LocalGpuWhisperProvider:
     def transcribe(
         self,
         audio_files: Path | list[Path],
-        mode: TranscriptionMode = "plain",
         progress_callback: ChunkProgressCallback | None = None,
-    ) -> str | NormalizedTranscript:
+    ) -> str:
         """기존 plain chunk workflow를 유지하며 local GPU Whisper로 전사합니다."""
-        if mode != "plain":
-            raise NotImplementedError("STT_PROVIDER=local_gpu_whisper only supports plain transcription for now.")
-
         from backend.services.stt import transformers_whisper
         from transcribe import (
             TranscriptionTimingStats,
@@ -177,7 +165,7 @@ class LocalGpuWhisperProvider:
 
         config = transformers_whisper.get_config()
         workflow_started_at = time.perf_counter()
-        chunk_config = get_audio_chunk_config("plain")
+        chunk_config = get_audio_chunk_config()
         concurrency = get_plain_transcription_concurrency()
         timing_stats = TranscriptionTimingStats(
             mode="plain",
@@ -209,7 +197,7 @@ class LocalGpuWhisperProvider:
 
         try:
             preparation_started_at = time.perf_counter()
-            files_to_transcribe = prepare_audio_files(audio_files, mode="plain", model_name=config.model_name)
+            files_to_transcribe = prepare_audio_files(audio_files, model_name=config.model_name)
             timing_stats.preparation_seconds = time.perf_counter() - preparation_started_at
             original_files = normalize_transcribe_audio_files(audio_files)
             temp_files.extend(file for file in files_to_transcribe if file not in original_files)
@@ -309,7 +297,7 @@ def import_whisper_model() -> Any:
 
 
 def get_stt_provider(
-    openai_implementation: Callable[[Path | list[Path], TranscriptionMode, ChunkProgressCallback | None], str | NormalizedTranscript],
+    openai_implementation: Callable[..., str],
     provider_name: str | None = None,
 ) -> TranscribeProvider:
     """STT_PROVIDER 값에 맞는 provider 객체를 반환합니다."""

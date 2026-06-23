@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -21,13 +21,17 @@ JOBS: dict[str, "JobRecord"] = {}
 JOBS_LOCK = RLock()
 
 
+def utc_now() -> datetime:
+    """작업 timestamp를 timezone-aware UTC 값으로 저장합니다."""
+    return datetime.now(timezone.utc)
+
+
 @dataclass
 class PipelineResult:
     """STT와 회의록 생성 결과를 함께 보관합니다."""
 
     transcript: str
     minutes: str
-    structured_transcript: dict[str, Any] | None = None
     action_items: list[dict[str, Any]] = field(default_factory=list)
     summary_facts: list[str] = field(default_factory=list)
     decisions: list[dict[str, Any]] = field(default_factory=list)
@@ -42,7 +46,7 @@ class JobRecord:
     id: str
     filename: str
     status: JobStatus = "pending"
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=utc_now)
     completed_at: datetime | None = None
     error: str | None = None
     result: PipelineResult | None = None
@@ -161,7 +165,7 @@ def mark_job_progress(
     """작업의 현재 진행률과 사용자에게 보여줄 상태 메시지를 저장합니다."""
     with JOBS_LOCK:
         job = require_job(job_id)
-        job.progress = max(0, min(100, progress))
+        job.progress = max(job.progress, max(0, min(100, progress)))
         job.stage = stage
         job.message = message
 
@@ -175,13 +179,13 @@ def mark_job_chunk_progress(job_id: str, completed_chunks: int, total_chunks: in
     """STT 청크 완료 수를 작업 상태에 반영합니다."""
     safe_total = max(0, total_chunks)
     safe_completed = max(0, min(completed_chunks, safe_total))
-    progress = 20 if safe_total == 0 else 20 + round((safe_completed / safe_total) * 65)
+    progress = 10 if safe_total == 0 else 10 + round((safe_completed / safe_total) * 70)
 
     with JOBS_LOCK:
         job = require_job(job_id)
         job.completed_chunks = safe_completed
         job.total_chunks = safe_total
-        job.progress = max(job.progress, min(85, progress))
+        job.progress = max(job.progress, min(80, progress))
         job.stage = "음성 변환"
         if safe_total > 1:
             job.message = f"음성을 텍스트로 변환하는 중입니다. {safe_completed}/{safe_total} 구간 완료"
@@ -192,24 +196,22 @@ def mark_job_chunk_progress(job_id: str, completed_chunks: int, total_chunks: in
 def mark_job_transcribed(
     job_id: str,
     transcript: str,
-    structured_transcript: dict[str, Any] | None = None,
 ) -> None:
     """STT 결과를 저장하고 transcript 검토 가능 상태로 변경합니다."""
     with JOBS_LOCK:
         job = require_job(job_id)
         job.status = "completed"
-        job.completed_at = datetime.now()
+        job.completed_at = utc_now()
         job.progress = 100
         job.stage = "Transcript 준비 완료"
         job.message = "음성 변환이 완료되었습니다. Transcript를 검토해 주세요."
-        job.result = PipelineResult(transcript=transcript, minutes="", structured_transcript=structured_transcript)
+        job.result = PipelineResult(transcript=transcript, minutes="")
 
 
 def mark_job_completed(
     job_id: str,
     transcript: str,
     summary: dict[str, Any],
-    structured_transcript: dict[str, Any] | None = None,
 ) -> None:
     """작업 결과를 저장하고 완료 상태로 변경합니다."""
     action_items = summary.get("action_items")
@@ -221,14 +223,13 @@ def mark_job_completed(
     with JOBS_LOCK:
         job = require_job(job_id)
         job.status = "completed"
-        job.completed_at = datetime.now()
+        job.completed_at = utc_now()
         job.progress = 100
         job.stage = "완료"
         job.message = "회의록 생성이 완료되었습니다."
         job.result = PipelineResult(
             transcript=transcript,
             minutes=summary.get("minutes") if isinstance(summary.get("minutes"), str) else "",
-            structured_transcript=structured_transcript,
             action_items=[item for item in action_items if isinstance(item, dict)] if isinstance(action_items, list) else [],
             summary_facts=[item for item in summary_facts if isinstance(item, str)] if isinstance(summary_facts, list) else [],
             decisions=[item for item in decisions if isinstance(item, dict)] if isinstance(decisions, list) else [],
@@ -242,7 +243,7 @@ def mark_job_failed(job_id: str, error: str) -> None:
     with JOBS_LOCK:
         job = require_job(job_id)
         job.status = "failed"
-        job.completed_at = datetime.now()
+        job.completed_at = utc_now()
         job.error = error
         job.stage = "실패"
         job.message = "회의록 생성 중 문제가 발생했습니다."

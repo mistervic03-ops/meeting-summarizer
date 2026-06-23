@@ -19,16 +19,6 @@ FIXTURE_NAMES = (
     "no_action_items_meeting.txt",
     "short_clear_meeting.txt",
 )
-EXPECTED_SPEAKER_COUNTS = {
-    "ambiguous_owner_due_date_meeting.txt": 4,
-    "decision_action_overlap_meeting.txt": 4,
-    "long_action_heavy_meeting.txt": 6,
-    "medium_project_meeting.txt": 5,
-    "no_action_items_meeting.txt": 3,
-    "short_clear_meeting.txt": 3,
-}
-
-
 def load_fixture_transcript(filename: str) -> str:
     """tests/fixtures/transcripts 아래의 fixture transcript를 읽습니다."""
     return (FIXTURE_DIR / filename).read_text(encoding="utf-8")
@@ -69,7 +59,7 @@ class TranscriptFixtureTests(unittest.TestCase):
         ambiguous_profile = analyze_fixture("ambiguous_owner_due_date_meeting.txt")
 
         self.assertEqual(choose_processing_strategy(short_profile), "direct")
-        self.assertEqual(choose_processing_strategy(long_profile), "chunk")
+        self.assertEqual(choose_processing_strategy(long_profile), "deep")
         self.assertLessEqual(no_action_profile.action_cue_count, 12)
         self.assertEqual(choose_processing_strategy(no_action_profile), "direct")
         self.assertGreaterEqual(ambiguous_profile.action_cue_count, 30)
@@ -79,12 +69,11 @@ class TranscriptFixtureTests(unittest.TestCase):
         self.assertIn("다음에", ambiguous_text)
         self.assertIn("이번 주 안에는", ambiguous_text)
 
-    def test_all_fixtures_normalize_to_stable_utterances_and_expected_speaker_counts(self) -> None:
-        """모든 fixture가 안정적인 utterance_id와 README 기준 speaker 수를 가집니다."""
+    def test_all_fixtures_normalize_to_stable_utterances(self) -> None:
+        """모든 fixture가 안정적인 utterance_id를 가집니다."""
         for fixture_name in FIXTURE_NAMES:
             with self.subTest(fixture=fixture_name):
                 normalized = normalize_fixture(fixture_name)
-                profile = analyze_fixture(fixture_name)
 
                 self.assertGreater(len(normalized.utterances), 0)
                 self.assertEqual(normalized.utterances[0].utterance_id, "u_0001")
@@ -92,7 +81,6 @@ class TranscriptFixtureTests(unittest.TestCase):
                     [utterance.utterance_id for utterance in normalized.utterances],
                     [f"u_{index + 1:04d}" for index in range(len(normalized.utterances))],
                 )
-                self.assertEqual(profile.speaker_count, EXPECTED_SPEAKER_COUNTS[fixture_name])
 
     def test_raw_internal_warnings_are_formatted_for_public_display(self) -> None:
         """public warning에는 내부 필드명이 남지 않고 표준 문장으로 변환됩니다."""
@@ -124,8 +112,8 @@ class TranscriptFixtureTests(unittest.TestCase):
             )
         )
 
-    def test_ambiguous_fixture_preserves_speakers_and_utterance_ids_for_llm(self) -> None:
-        """speaker-labeled fixture의 발화 ID와 화자 라벨이 LLM 렌더링에 보존됩니다."""
+    def test_ambiguous_fixture_preserves_utterance_ids_and_text_for_llm(self) -> None:
+        """fixture의 발화 ID와 원문 텍스트가 LLM 렌더링에 보존됩니다."""
         normalized = normalize_fixture("ambiguous_owner_due_date_meeting.txt")
         target_text = "큐 지연 쪽을 확인해보겠습니다."
         target_utterance = find_fixture_utterance(normalized, target_text)
@@ -133,10 +121,9 @@ class TranscriptFixtureTests(unittest.TestCase):
 
         self.assertGreater(len(normalized.utterances), 0)
         self.assertEqual(normalized.utterances[0].utterance_id, "u_0001")
-        self.assertEqual(normalized.utterances[0].speaker, "김하준")
-        self.assertEqual(target_utterance.speaker, "이서연")
+        self.assertTrue(normalized.utterances[0].text.startswith("김하준:"))
         self.assertIn(f"[{normalized.utterances[0].utterance_id}] 김하준:", rendered)
-        self.assertIn(f"[{target_utterance.utterance_id}] 이서연:", rendered)
+        self.assertIn(f"[{target_utterance.utterance_id}]", rendered)
         self.assertIn(target_text, rendered)
 
     def test_ambiguous_fixture_validation_backfills_source_utterance_ids(self) -> None:
@@ -169,8 +156,8 @@ class TranscriptFixtureTests(unittest.TestCase):
         self.assertEqual(result["action_items"][0]["source_utterance_ids"], [target_utterance.utterance_id])
         self.assertFalse(any("원문 근거 확인" in warning for warning in result["warnings"]))
 
-    def test_ambiguous_fixture_speaker_owner_does_not_create_owner_warning(self) -> None:
-        """fixture의 실제 speaker label owner는 담당자 확인 warning으로 처리하지 않습니다."""
+    def test_ambiguous_fixture_named_owner_does_not_create_owner_warning(self) -> None:
+        """명시된 owner는 담당자 확인 warning으로 처리하지 않습니다."""
         from summarization.validation import validate_structure
 
         transcript = load_fixture_transcript("ambiguous_owner_due_date_meeting.txt")

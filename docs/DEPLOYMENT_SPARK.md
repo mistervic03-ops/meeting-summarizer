@@ -20,7 +20,7 @@ curl http://localhost:8000/api/health
 - 프론트엔드 접속:
 
 ```text
-http://192.168.3.41:5173
+http://192.168.3.41:3000
 ```
 
 현재 production-candidate 운영 모드는 local GPU Whisper STT입니다. OpenAI STT는 코드와 설정에 남아 있으며, UI에서는 고급/클라우드 모드로 선택합니다.
@@ -32,13 +32,13 @@ SUMMARIZATION_PROVIDER=openai
 
 ## 배포 모드
 
-기존 `docker-compose.yml`은 안정 rollback 기준입니다. Spark/GB10 서버의 local GPU STT 운영은 아래 local GPU overlay를 함께 적용합니다.
+기존 `docker-compose.yml`은 안정 rollback 기준입니다. plain `docker compose up -d`만 실행하면 local GPU mode가 활성화되지 않습니다.
 
 ```bash
 docker compose up -d
 ```
 
-local GPU Whisper backend는 별도 overlay로만 실행합니다. 이 overlay는 backend image만 NGC PyTorch runtime으로 바꾸고 `STT_PROVIDER=local_gpu_whisper`를 설정합니다. 프론트엔드, 네트워크, 포트, volume, `.env` 로딩 방식은 기존 compose 설정을 그대로 따릅니다.
+Spark/GB10 서버의 local GPU STT 운영은 아래 local GPU overlay를 반드시 함께 적용합니다. 이 overlay는 backend image만 NGC PyTorch runtime으로 바꾸고 `STT_PROVIDER=local_gpu_whisper`를 설정합니다. 프론트엔드, 네트워크, 포트, volume, `.env` 로딩 방식은 기존 compose 설정을 그대로 따릅니다.
 
 ```bash
 docker compose \
@@ -122,7 +122,7 @@ CPU local Whisper에서 관찰한 문제:
 운영 지침:
 
 - production-candidate default는 `STT_PROVIDER=local_gpu_whisper`입니다.
-- user-facing 기본 모드는 `기본 모드 / 로컬 GPU`입니다.
+- user-facing 기본 모드는 `기본 모드 / 사내 서버`입니다.
 - user-facing 고급/클라우드 모드는 `고급 모드 / OpenAI API`입니다.
 - backend transcription mode default는 계속 `plain`입니다.
 - `STT_PROVIDER=local_whisper`는 실험용으로 유지합니다.
@@ -133,6 +133,8 @@ CPU local Whisper에서 관찰한 문제:
 - glossary prompt_ids 경로는 기본 비활성화합니다. 필요 시 별도 평가 후 `LOCAL_GPU_ENABLE_STT_PROMPT=true`로만 켭니다.
 
 ## GPU STT 평가 상태
+
+Last verified: 2026-06-23
 
 검증된 사실:
 
@@ -189,6 +191,8 @@ ffmpeg -i input.m4a input.wav
 ```
 
 ## 서버 디스크와 정리 지침
+
+Last verified: 2026-06-23
 
 현재 주요 local addition 규모:
 
@@ -252,3 +256,23 @@ npm run build
 ```bash
 curl http://localhost:8000/api/health
 ```
+
+Spark 배포 직후에는 backend container가 `Started` 상태여도 Uvicorn이 요청을 받을 준비가 되기 전 짧은 시간 동안 `curl: (56) Recv failure: Connection reset by peer`가 발생할 수 있습니다. 배포 성공 여부를 단발 `curl`로 판단하지 말고 아래 retry/wait 하네스를 사용합니다.
+
+```bash
+for attempt in $(seq 1 20); do
+  if curl -fsS http://localhost:8000/api/health; then
+    echo
+    break
+  fi
+  if [ "$attempt" -eq 20 ]; then
+    echo "health check failed after 20 attempts" >&2
+    docker compose -f docker-compose.yml -f docker-compose.local-gpu.yml ps
+    docker compose -f docker-compose.yml -f docker-compose.local-gpu.yml logs --tail=80 backend
+    exit 1
+  fi
+  sleep 2
+done
+```
+
+이 하네스가 실패할 때만 container 상태와 backend log를 근거로 배포 실패를 판단합니다.

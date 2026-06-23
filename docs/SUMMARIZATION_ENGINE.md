@@ -21,6 +21,8 @@ The current React and FastAPI flow is:
 7. `summarize_transcript()`
 8. `ResultPage`
 
+The UI also supports direct text/transcript upload (`텍스트 업로드` mode), which skips STT and sends the provided transcript to the transcript-job summarization path.
+
 Important properties:
 
 - STT and meeting-minutes generation are separated.
@@ -40,6 +42,7 @@ summarization/
   profiling.py
   prompts.py
   schemas.py
+  glossary.py       # 요약 glossary 용어 로딩, 파싱, 길이 제한
   extraction.py
   validation.py
   rendering.py
@@ -78,19 +81,22 @@ preprocess_transcript
 
 - removes only standalone filler tokens
 - preserves meaningful context
-- merges consecutive utterances from the same speaker
 - extracts meeting date information
 
 `normalize_transcript()`:
 
 - creates stable utterance records
 - assigns `utterance_id`
-- preserves speaker labels when present
-- supports speakerless plain transcripts with `Unknown`
+- treats every non-empty transcript line as plain text
+- splits plain transcript lines longer than 500 characters into sentence-boundary windows
+- renders every utterance as `[utterance_id] text`
+- does not parse, store, merge, or synthesize speaker labels
 
 ### 2. Profile and Strategy Selection
 
-`analyze_transcript_profile()` measures transcript complexity, including utterance count, speaker count, and cue density.
+`analyze_transcript_profile()` measures transcript complexity, including utterance count and cue counts.
+
+`choose_processing_strategy()` is calibrated for plain STT and selects strategy from transcript length and absolute cue count rather than speaker or utterance structure.
 
 `choose_processing_strategy()` selects:
 
@@ -105,6 +111,8 @@ Deep mode currently uses the chunk pipeline rather than a separate heavy archite
 Direct mode calls `extract_structure()`.
 
 Chunk/deep mode calls `extract_structure_by_chunks()`, then merges chunk outputs.
+Chunk extraction runs chunks concurrently while preserving merge order. The worker count is controlled by `SUMMARY_CHUNK_CONCURRENCY` with a default of 4 and a maximum of 8.
+When the backend provides a progress callback, chunk extraction reports completed chunk counts so the job polling response can advance during long structure extraction.
 
 The model-facing schema returns:
 
@@ -113,6 +121,8 @@ The model-facing schema returns:
 - `action_items`
 - `speaker_highlights`
 - `warnings`
+
+The extraction prompt treats plain STT as the only supported transcript shape: action owners must come from names or teams explicitly mentioned in the utterance text, otherwise the owner remains `미정`. The prompt instructs the model to write `speaker_highlights` as discussion/source highlights rather than speaker-attributed notes.
 
 Internally, decisions and action items include:
 
@@ -124,6 +134,8 @@ These grounding fields are used for validation but are not exposed in the public
 ### 4. Policy and Validation
 
 `apply_extraction_policy()` applies meeting-type-specific rules and can downgrade weak action/decision candidates to discussion notes.
+Execution meetings keep high recall for well-formed operational actions, but low-confidence candidates without owner, due date, or strong action evidence are downgraded to discussion notes.
+Customer meetings, technical reviews, and brainstorming sessions bias requirements, objections, weak technical directions, and exploratory ideas toward `speaker_highlights` unless the transcript contains explicit ownership, convergence, or follow-up commitment.
 
 `validate_structure()` performs deterministic Python checks:
 
@@ -152,6 +164,20 @@ These grounding fields are used for validation but are not exposed in the public
 - `warnings`
 
 Public action items and decisions intentionally hide `source_quote` and `source_utterance_ids` until the API/UI explicitly supports exposing them.
+
+### Progress Reporting
+
+`summarize_transcript()` accepts an optional progress callback. The default remains `None` so existing callers keep the same public return shape.
+
+The backend uses this callback to report:
+
+- normalized transcript ready
+- strategy selected (`direct`, `chunk`, or `deep`)
+- chunk extraction progress, when chunk/deep strategy is used
+- structure extraction complete
+- natural-language minutes generation complete
+
+Progress percentages are monotonic within each independent job. STT chunk progress maps to 10-80%, transcript preparation reaches 90%, and STT completion reaches 100% before the frontend transitions to review. The separate summarization job starts at 15%, advances through 25%, 35%, chunk extraction progress from 35-75%, then 80%, 88%, 95%, and completion at 100%.
 
 ## Current Constraints
 

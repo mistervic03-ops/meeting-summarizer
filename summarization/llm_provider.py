@@ -108,14 +108,47 @@ JSON 문자열 밖에는 어떤 텍스트도 출력하지 마세요.
 def parse_claude_json_response(response: object) -> dict[str, Any]:
     """Claude 응답 텍스트를 JSON object로 파싱합니다."""
     text = extract_claude_response_text(response)
+    json_text = extract_first_json_object_text(text) or text
     try:
-        parsed_json = json.loads(text)
+        parsed_json = json.loads(json_text)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Claude response was not valid JSON: {exc}") from exc
 
     if not isinstance(parsed_json, dict):
         raise ValueError("Claude structured response must be a JSON object.")
     return parsed_json
+
+
+def extract_first_json_object_text(text: str) -> str | None:
+    """응답 텍스트에서 첫 번째 complete JSON object 후보를 반환합니다."""
+    start_index = text.find("{")
+    if start_index < 0:
+        return None
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start_index, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start_index : index + 1]
+
+    return None
 
 
 def extract_claude_response_text(response: object) -> str:

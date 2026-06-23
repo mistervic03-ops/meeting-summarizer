@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Circle, Loader2 } from "lucide-react";
 import { JobStatus, JobStatusResponse } from "../api/types";
 
@@ -14,11 +14,13 @@ interface ProgressPanelProps {
 
 const DEFAULT_STEPS = [
   { label: "업로드 준비", progress: 10 },
-  { label: "음성 분석 준비", progress: 20 },
-  { label: "음성 변환", progress: 85 },
-  { label: "회의 요약 생성", progress: 90 },
+  { label: "음성 변환", progress: 80 },
+  { label: "회의 요약 생성", progress: 88 },
   { label: "결과 정리", progress: 100 }
 ];
+const WARMUP_CHUNK_SECONDS = 60;
+const NORMAL_CHUNK_SECONDS = 25;
+const WARMUP_CHUNK_COUNT = 3;
 
 /**
  * Renders the upload job progress as a quiet, scan-friendly progress section.
@@ -32,48 +34,44 @@ export default function ProgressPanel({
   steps = DEFAULT_STEPS,
   status
 }: ProgressPanelProps) {
-  const reportedProgress = getReportedProgress(status, jobStatus);
-  const [visibleProgress, setVisibleProgress] = useState(reportedProgress);
+  const backendProgress = getBackendProgress(status, jobStatus);
+  const visibleJobIdRef = useRef<string | null>(jobStatus?.job_id ?? null);
+  const [visibleProgress, setVisibleProgress] = useState(backendProgress);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const reportedStage = jobStatus?.stage ?? (status === "idle" ? idleStage : pendingStage);
-  const progress = getVisibleProgress(status, visibleProgress, reportedProgress, reportedStage);
+  const progress = visibleProgress;
   const stage = getFriendlyStage(reportedStage, status);
   const message = jobStatus?.message ?? (status === "idle" ? idleMessage : pendingMessage);
   const activeStepIndex = getActiveStepIndex(steps, progress, stage, status);
-  const chunkDetail = getChunkDetail(jobStatus);
+  const progressTimingDetail = getProgressTimingDetail(jobStatus, status, reportedStage, nowMs);
 
   useEffect(() => {
     setVisibleProgress((currentProgress) => {
-      const minimumProgress = getMinimumProgress(status, reportedProgress, reportedStage);
+      const currentJobId = jobStatus?.job_id ?? null;
       if (status === "idle") {
+        visibleJobIdRef.current = currentJobId;
         return 0;
       }
-      if (status === "completed") {
-        return 100;
+      if (visibleJobIdRef.current !== currentJobId) {
+        visibleJobIdRef.current = currentJobId;
+        return backendProgress;
       }
-      if (currentProgress - minimumProgress > 20) {
-        return minimumProgress;
-      }
-      return Math.max(minimumProgress, Math.min(currentProgress, 99));
+      return Math.max(currentProgress, backendProgress);
     });
-  }, [reportedProgress, reportedStage, status]);
+  }, [backendProgress, jobStatus?.job_id, status]);
 
   useEffect(() => {
     if (status !== "pending" && status !== "processing") {
       return;
     }
 
+    setNowMs(Date.now());
     const intervalId = window.setInterval(() => {
-      setVisibleProgress((currentProgress) => {
-        const cap = getOptimisticProgressCap(jobStatus, status);
-        if (currentProgress >= cap) {
-          return currentProgress;
-        }
-        return Math.min(cap, currentProgress + 1);
-      });
-    }, 2500);
+      setNowMs(Date.now());
+    }, 1000);
 
     return () => window.clearInterval(intervalId);
-  }, [jobStatus?.stage, status]);
+  }, [status]);
 
   return (
     <section className="border-y border-slate-300 py-3">
@@ -84,7 +82,6 @@ export default function ProgressPanel({
         <div className="min-w-0">
           <h2 className="text-[12px] font-semibold text-slate-950">{stage}</h2>
           <p className="mt-0.5 break-words text-[11px] leading-4 text-slate-500">{message}</p>
-          {chunkDetail ? <p className="mt-1 text-[11px] font-medium leading-4 text-brand-700 dark:text-app-accent">{chunkDetail}</p> : null}
         </div>
       </div>
 
@@ -103,7 +100,10 @@ export default function ProgressPanel({
             style={{ width: `${progress}%` }}
           />
         </div>
-        <p className="mt-1 text-right text-[11px] font-medium text-slate-500">{Math.round(progress)}%</p>
+        <div className="mt-1 flex items-center justify-between gap-3 text-[11px] font-medium text-slate-500">
+          <span>{progressTimingDetail}</span>
+          <span>{Math.round(progress)}%</span>
+        </div>
       </div>
 
       <div className="mt-2 divide-y divide-slate-100">
@@ -143,78 +143,14 @@ export default function ProgressPanel({
 
 type StepState = "active" | "done" | "pending";
 
-function getReportedProgress(status: JobStatus, jobStatus: JobStatusResponse | null): number {
+function getBackendProgress(status: JobStatus, jobStatus: JobStatusResponse | null): number {
   if (status === "idle") {
     return 0;
   }
   if (status === "completed") {
     return 100;
   }
-  const chunkProgress = isChunkProgressActive(jobStatus) ? getChunkProgress(jobStatus) : null;
-  if (chunkProgress !== null) {
-    return chunkProgress;
-  }
-  return jobStatus?.progress ?? 5;
-}
-
-function getMinimumProgress(status: JobStatus, reportedProgress: number, stage: string): number {
-  if (status === "completed") {
-    return 100;
-  }
-  if (status === "failed") {
-    return reportedProgress;
-  }
-  if (status === "pending") {
-    return Math.max(reportedProgress, 10);
-  }
-  if (status === "processing") {
-    if (stage.includes("결과 정리") || stage.includes("Transcript 정리")) {
-      return Math.max(reportedProgress, 90);
-    }
-    if (stage.includes("회의록 작성") || stage.includes("요약")) {
-      return Math.max(reportedProgress, 75);
-    }
-    if (stage.includes("음성 변환")) {
-      return Math.max(reportedProgress, 20);
-    }
-    return Math.max(reportedProgress, 15);
-  }
-  return reportedProgress;
-}
-
-function getVisibleProgress(status: JobStatus, visibleProgress: number, reportedProgress: number, stage: string): number {
-  if (status === "completed") {
-    return 100;
-  }
-  if (status === "idle") {
-    return 0;
-  }
-  return Math.max(getMinimumProgress(status, reportedProgress, stage), Math.min(visibleProgress, 99));
-}
-
-function getOptimisticProgressCap(jobStatus: JobStatusResponse | null, status: JobStatus): number {
-  if (status === "pending") {
-    return 15;
-  }
-  const chunkProgress = isChunkProgressActive(jobStatus) ? getChunkProgress(jobStatus) : null;
-  if (chunkProgress !== null) {
-    return Math.min(85, chunkProgress + 2);
-  }
-
-  const stage = jobStatus?.stage ?? "";
-  if (stage.includes("회의록 작성") || stage.includes("요약")) {
-    return 90;
-  }
-  if (stage.includes("결과 정리") || stage.includes("Transcript 정리")) {
-    return 96;
-  }
-  if (stage.includes("음성 변환")) {
-    return 85;
-  }
-  if (stage.includes("파일 준비")) {
-    return 20;
-  }
-  return 70;
+  return clampProgress(jobStatus?.progress ?? 10);
 }
 
 function getFriendlyStage(stage: string, status: JobStatus): string {
@@ -242,25 +178,66 @@ function getFriendlyStage(stage: string, status: JobStatus): string {
   return stage;
 }
 
-function getChunkDetail(jobStatus: JobStatusResponse | null): string {
-  if (!isChunkProgressActive(jobStatus) || jobStatus?.completed_chunks == null || !jobStatus.total_chunks || jobStatus.total_chunks <= 1) {
+function getProgressTimingDetail(
+  jobStatus: JobStatusResponse | null,
+  status: JobStatus,
+  stage: string,
+  nowMs: number
+): string {
+  if (!jobStatus || (status !== "pending" && status !== "processing")) {
     return "";
   }
 
-  return `음성 변환 중 · ${jobStatus.completed_chunks}/${jobStatus.total_chunks} 구간 완료`;
-}
-
-function getChunkProgress(jobStatus: JobStatusResponse | null): number | null {
-  if (jobStatus?.completed_chunks == null || !jobStatus.total_chunks || jobStatus.total_chunks <= 0) {
-    return null;
+  const elapsedSeconds = getElapsedSeconds(jobStatus.created_at, nowMs);
+  if (elapsedSeconds <= 0) {
+    return "";
   }
 
-  const completedRatio = Math.max(0, Math.min(jobStatus.completed_chunks, jobStatus.total_chunks)) / jobStatus.total_chunks;
-  return 20 + Math.round(completedRatio * 65);
+  if (isChunkProgressActive(jobStatus) && jobStatus.completed_chunks != null && jobStatus.total_chunks) {
+    if (jobStatus.completed_chunks < 2) {
+      return "";
+    }
+    const safeCompleted = Math.max(0, Math.min(jobStatus.completed_chunks, jobStatus.total_chunks));
+    const remainingChunks = Math.max(0, jobStatus.total_chunks - safeCompleted);
+    if (remainingChunks === 0) {
+      return "";
+    }
+    return `약 ${formatRemainingDuration(getEstimatedSttRemainingSeconds(safeCompleted, remainingChunks))} 남았습니다`;
+  }
+
+  if (stage.includes("회의록 작성")) {
+    return `${Math.round(elapsedSeconds)}초 경과`;
+  }
+
+  return "";
+}
+
+function getElapsedSeconds(createdAt: string, nowMs: number): number {
+  const createdAtMs = new Date(normalizeDateTimeString(createdAt)).getTime();
+  if (!Number.isFinite(createdAtMs)) {
+    return 0;
+  }
+  return Math.max(0, (nowMs - createdAtMs) / 1000);
+}
+
+function normalizeDateTimeString(value: string): string {
+  return /(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`;
+}
+
+function getEstimatedSttRemainingSeconds(completedChunks: number, remainingChunks: number): number {
+  if (completedChunks >= WARMUP_CHUNK_COUNT) {
+    return remainingChunks * NORMAL_CHUNK_SECONDS;
+  }
+  const remainingWarmupChunks = WARMUP_CHUNK_COUNT - completedChunks;
+  return (remainingWarmupChunks * WARMUP_CHUNK_SECONDS) + ((remainingChunks - remainingWarmupChunks) * NORMAL_CHUNK_SECONDS);
 }
 
 function isChunkProgressActive(jobStatus: JobStatusResponse | null): boolean {
   return Boolean(jobStatus?.stage.includes("음성 변환") && jobStatus.status !== "completed");
+}
+
+function clampProgress(progress: number): number {
+  return Math.max(0, Math.min(100, progress));
 }
 
 /**
@@ -330,4 +307,12 @@ function formatDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = Math.round(seconds % 60);
   return `${minutes}분 ${remainingSeconds}초`;
+}
+
+function formatRemainingDuration(seconds: number): string {
+  const roundedSeconds = Math.max(0, Math.round(seconds));
+  if (roundedSeconds < 60) {
+    return `${roundedSeconds}초`;
+  }
+  return `${Math.ceil(roundedSeconds / 60)}분`;
 }

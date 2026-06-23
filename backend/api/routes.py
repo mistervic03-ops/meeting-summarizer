@@ -13,14 +13,14 @@ try:
     from backend.db import get_db_connection
     from backend.schemas import JobCreateResponse, JobResultResponse, JobStatusResponse, MeetingType, TranscriptJobRequest, TranscriptResultResponse
     from backend.session import get_or_create_session
-    from backend.services.pipeline import run_meeting_pipeline, run_transcript_summary_pipeline, run_transcription_pipeline
+    from backend.services.pipeline import run_transcript_summary_pipeline, run_transcription_pipeline
     from backend.storage import create_job, get_job, get_job_status_snapshot, mark_job_failed, save_upload_file, set_job_context, set_job_meeting_type
 except ModuleNotFoundError:
     # `backend/` 디렉터리 안에서 직접 서버를 띄우는 개발 흐름을 지원합니다.
     from db import get_db_connection
     from schemas import JobCreateResponse, JobResultResponse, JobStatusResponse, MeetingType, TranscriptJobRequest, TranscriptResultResponse
     from session import get_or_create_session
-    from services.pipeline import run_meeting_pipeline, run_transcript_summary_pipeline, run_transcription_pipeline
+    from services.pipeline import run_transcript_summary_pipeline, run_transcription_pipeline
     from storage import create_job, get_job, get_job_status_snapshot, mark_job_failed, save_upload_file, set_job_context, set_job_meeting_type
 
 router = APIRouter()
@@ -33,35 +33,6 @@ def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.post("/jobs", response_model=JobCreateResponse)
-async def create_process_job(
-    background_tasks: BackgroundTasks,
-    request: Request,
-    response: Response,
-    audio_file: UploadFile = File(...),
-    context: str = Form(default=""),
-    meeting_type: MeetingType = Form(default="execution"),
-) -> JobCreateResponse:
-    """업로드된 오디오와 선택 컨텍스트를 저장하고 백그라운드 처리 작업을 시작합니다."""
-    session_id = get_or_create_session(request, response)
-    job = create_job(filename=audio_file.filename or "uploaded_audio")
-    create_meeting_record(job.id, session_id, job.filename, "pending")
-
-    try:
-        audio_path = await save_upload_file(job.id, audio_file)
-        context_text = context.strip()
-
-        # 긴 STT/요약 작업은 요청 응답을 막지 않도록 백그라운드에서 실행합니다.
-        set_job_meeting_type(job.id, meeting_type)
-        background_tasks.add_task(run_meeting_pipeline, job.id, audio_path, context_text, meeting_type)
-    except Exception as exc:
-        mark_job_failed(job.id, f"업로드 파일을 처리하지 못했습니다: {exc}")
-        mark_meeting_failed(job.id, str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return JobCreateResponse(job_id=job.id, status=job.status)
-
-
 @router.post("/transcriptions", response_model=JobCreateResponse)
 async def create_transcription_job(
     background_tasks: BackgroundTasks,
@@ -70,12 +41,9 @@ async def create_transcription_job(
     audio_file: UploadFile = File(...),
     context: str = Form(default=""),
     meeting_type: MeetingType = Form(default="execution"),
-    transcription_mode: str = Form(default="plain"),
     stt_provider: str = Form(default=""),
 ) -> JobCreateResponse:
     """업로드된 오디오를 STT 처리해 transcript 검토 작업을 시작합니다."""
-    if transcription_mode not in {"plain", "diarized"}:
-        raise HTTPException(status_code=400, detail="지원하지 않는 transcription mode입니다.")
     if stt_provider and stt_provider not in {"local_gpu_whisper", "openai"}:
         raise HTTPException(status_code=400, detail="지원하지 않는 STT provider입니다.")
 
@@ -93,9 +61,8 @@ async def create_transcription_job(
             run_transcription_pipeline,
             job.id,
             audio_path,
-            transcription_mode,
-            meeting_type,
-            stt_provider or None,
+            meeting_type=meeting_type,
+            stt_provider=stt_provider or None,
         )
     except Exception as exc:
         mark_job_failed(job.id, f"업로드 파일을 처리하지 못했습니다: {exc}")
@@ -118,16 +85,20 @@ def create_transcript_process_job(
         raise HTTPException(status_code=400, detail="회의록을 생성할 transcript가 비어 있습니다.")
 
     session_id = get_or_create_session(request, response)
-    structured_transcript = dump_structured_transcript(payload.structured_transcript)
-    job = create_job(filename=payload.filename or "transcript.txt")
-    create_meeting_record(job.id, session_id, job.filename, "pending")
+    linked_title = get_meeting_title(payload.transcription_job_id, session_id) if payload.transcription_job_id else None
+    job = create_job(filename=linked_title or payload.filename or "transcript.txt")
+    linked_to_transcription = False
+    if payload.transcription_job_id:
+        linked_to_transcription = link_transcript_to_transcription_meeting(payload.transcription_job_id, job.id, session_id)
+    if not linked_to_transcription:
+        create_meeting_record(job.id, session_id, job.filename, "pending")
     background_tasks.add_task(
         run_transcript_summary_pipeline,
         job.id,
         transcript,
         payload.context.strip(),
-        structured_transcript,
         payload.meeting_type,
+        meeting_record_id=job.id,
     )
     return JobCreateResponse(job_id=job.id, status=job.status)
 
@@ -174,6 +145,18 @@ def get_meeting(meeting_id: str, request: Request, response: Response) -> dict[s
     }
 
 
+@router.delete("/meetings/{meeting_id}", status_code=204)
+def delete_meeting(meeting_id: str, request: Request, response: Response) -> Response:
+    """현재 세션에 속한 저장 회의 row와 artifact 파일을 삭제합니다."""
+    session_id = get_or_create_session(request, response)
+    artifact_paths = delete_meeting_record(meeting_id, session_id)
+    if artifact_paths is None:
+        raise HTTPException(status_code=404, detail="회의를 찾을 수 없습니다.")
+
+    remove_text_artifacts(*artifact_paths)
+    return Response(status_code=204)
+
+
 @router.get("/jobs/{job_id}/transcript", response_model=TranscriptResultResponse)
 def get_transcription_result(job_id: str) -> TranscriptResultResponse:
     """STT 완료 작업의 transcript와 팀 컨텍스트를 반환합니다."""
@@ -190,21 +173,7 @@ def get_transcription_result(job_id: str) -> TranscriptResultResponse:
         transcript=job.result.transcript,
         context=job.context,
         stt_seconds=job.stt_seconds,
-        structured_transcript=job.result.structured_transcript,
     )
-
-
-def dump_structured_transcript(structured_transcript: object) -> dict | None:
-    """Pydantic 버전에 맞춰 structured transcript를 저장 가능한 dict로 변환합니다."""
-    if structured_transcript is None:
-        return None
-    model_dump = getattr(structured_transcript, "model_dump", None)
-    if callable(model_dump):
-        return model_dump()
-    dict_dump = getattr(structured_transcript, "dict", None)
-    if callable(dict_dump):
-        return dict_dump()
-    return None
 
 
 def create_meeting_record(job_id: str, session_id: str, title: str, status: str) -> None:
@@ -221,6 +190,37 @@ def create_meeting_record(job_id: str, session_id: str, title: str, status: str)
         )
 
 
+def get_meeting_title(meeting_id: str, session_id: str) -> str | None:
+    """현재 세션의 meeting row 제목을 반환합니다."""
+    with get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT title
+            FROM meetings
+            WHERE id = ? AND session_id = ?
+            """,
+            (meeting_id, session_id),
+        ).fetchone()
+    if row is None:
+        return None
+    title = row["title"]
+    return title if isinstance(title, str) and title else None
+
+
+def link_transcript_to_transcription_meeting(transcription_job_id: str, new_job_id: str, session_id: str) -> bool:
+    """STT meeting row를 회의록 생성 job id로 연결합니다."""
+    with get_db_connection() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE meetings
+            SET id = ?, status = ?, error = NULL
+            WHERE id = ? AND session_id = ?
+            """,
+            (new_job_id, "pending", transcription_job_id, session_id),
+        )
+        return cursor.rowcount > 0
+
+
 def mark_meeting_failed(job_id: str, error: str) -> None:
     """업로드 단계 실패를 영구 meeting row에 반영합니다."""
     with get_db_connection() as connection:
@@ -234,6 +234,30 @@ def mark_meeting_failed(job_id: str, error: str) -> None:
         )
 
 
+def delete_meeting_record(meeting_id: str, session_id: str) -> tuple[object, object] | None:
+    """현재 세션의 meeting row를 삭제하고 artifact 경로를 반환합니다."""
+    with get_db_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT transcript_path, summary_path
+            FROM meetings
+            WHERE id = ? AND session_id = ?
+            """,
+            (meeting_id, session_id),
+        ).fetchone()
+        if row is None:
+            return None
+
+        connection.execute(
+            """
+            DELETE FROM meetings
+            WHERE id = ? AND session_id = ?
+            """,
+            (meeting_id, session_id),
+        )
+    return row["transcript_path"], row["summary_path"]
+
+
 def read_text_artifact(raw_path: object) -> str:
     """artifact 경로가 있으면 텍스트 내용을 읽고 없으면 빈 문자열을 반환합니다."""
     if not isinstance(raw_path, str) or not raw_path:
@@ -242,6 +266,28 @@ def read_text_artifact(raw_path: object) -> str:
     if not path.exists() or not path.is_file():
         return ""
     return path.read_text(encoding="utf-8")
+
+
+def remove_text_artifacts(*raw_paths: object) -> None:
+    """meeting row에 연결된 artifact 파일을 삭제합니다."""
+    parent_dirs: set[Path] = set()
+    for raw_path in raw_paths:
+        if not isinstance(raw_path, str) or not raw_path:
+            continue
+        path = Path(raw_path)
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            path.unlink()
+            parent_dirs.add(path.parent)
+        except OSError:
+            continue
+
+    for parent_dir in parent_dirs:
+        try:
+            parent_dir.rmdir()
+        except OSError:
+            continue
 
 
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
