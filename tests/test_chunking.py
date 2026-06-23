@@ -95,8 +95,10 @@ class TranscriptChunkingFixtureTests(unittest.TestCase):
 
         self.assertEqual(result, merged_structure)
         self.assertEqual(extract_mock.call_count, len(expected_chunks))
-        for chunk, call in zip(expected_chunks, extract_mock.call_args_list):
-            self.assertEqual(call.args, (chunk.text, "2026-05-15", "fixture test"))
+        self.assertCountEqual(
+            [call.args for call in extract_mock.call_args_list],
+            [(chunk.text, "2026-05-15", "fixture test") for chunk in expected_chunks],
+        )
         merge_mock.assert_called_once()
         self.assertEqual(len(merge_mock.call_args.args[0]), len(expected_chunks))
         validate_mock.assert_not_called()

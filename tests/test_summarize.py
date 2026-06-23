@@ -823,10 +823,25 @@ Speaker 1: 배포 확인
             glossary_terms=["BigQuery"],
         )
         merge_mock.assert_called_once_with([first_structure, second_structure])
-        self.assertEqual(
-            events,
-            ["segment", "extract:김민수: 첫 번째 논의", "extract:이서연: 두 번째 논의", "merge"],
+        self.assertEqual(events[0], "segment")
+        self.assertEqual(events[-1], "merge")
+        self.assertCountEqual(
+            events[1:-1],
+            ["extract:김민수: 첫 번째 논의", "extract:이서연: 두 번째 논의"],
         )
+
+    def test_summary_chunk_concurrency_uses_env_with_bounds(self) -> None:
+        """SUMMARY_CHUNK_CONCURRENCY는 1~8 범위로 제한됩니다."""
+        from summarization import chunk_pipeline
+
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(chunk_pipeline.get_summary_chunk_concurrency(), 4)
+        with patch.dict(os.environ, {"SUMMARY_CHUNK_CONCURRENCY": "12"}):
+            self.assertEqual(chunk_pipeline.get_summary_chunk_concurrency(), 8)
+        with patch.dict(os.environ, {"SUMMARY_CHUNK_CONCURRENCY": "0"}):
+            self.assertEqual(chunk_pipeline.get_summary_chunk_concurrency(), 1)
+        with patch.dict(os.environ, {"SUMMARY_CHUNK_CONCURRENCY": "invalid"}):
+            self.assertEqual(chunk_pipeline.get_summary_chunk_concurrency(), 4)
 
     def test_extract_structure_by_chunks_returns_empty_shape_for_empty_transcript(self) -> None:
         """chunk가 없으면 extract나 merge 없이 빈 structure shape를 반환합니다."""
@@ -862,10 +877,11 @@ Speaker 1: 배포 확인
             chunk_pipeline, "extract_structure", return_value=structure
         ), patch.object(chunk_pipeline, "merge_structures", return_value=structure), patch(
             "summarization.validation.validate_structure"
-        ) as validate_mock:
+        ) as validate_mock, patch.object(chunk_pipeline, "ThreadPoolExecutor") as executor_mock:
             result = chunk_pipeline.extract_structure_by_chunks(normalized, "2026-05-14")
 
         self.assertEqual(result, structure)
+        executor_mock.assert_not_called()
         validate_mock.assert_not_called()
 
     def test_analyze_transcript_profile_counts_speakers_and_cues(self) -> None:

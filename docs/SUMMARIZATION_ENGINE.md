@@ -109,6 +109,7 @@ Deep mode currently uses the chunk pipeline rather than a separate heavy archite
 Direct mode calls `extract_structure()`.
 
 Chunk/deep mode calls `extract_structure_by_chunks()`, then merges chunk outputs.
+Chunk extraction runs chunks concurrently while preserving merge order. The worker count is controlled by `SUMMARY_CHUNK_CONCURRENCY` with a default of 4 and a maximum of 8.
 
 The model-facing schema returns:
 
