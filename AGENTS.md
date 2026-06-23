@@ -14,6 +14,8 @@ BigxData 내부 회의록 도구입니다. 오디오 업로드, STT, transcript 
 
 - 작업 시작 전 변경 범위와 관련된 `docs/` 파일을 먼저 읽습니다.
 - 코드 변경 후 영향받은 `docs/` 파일을 업데이트하고 응답에서 업데이트 여부를 명시합니다.
+- 테스트 관련 변경 시 `python3 -m pytest tests/ -v`를 실행하고 모든 테스트가 통과하는지 확인합니다.
+- 새 기능이나 리팩토링 시 관련 테스트를 함께 추가하거나 수정합니다.
 - frontend 변경 시 commit 전 `npm run tsc -b`를 실행합니다.
 - pipeline 또는 summarization 변경 시 `docs/SUMMARIZATION_ENGINE.md`를 업데이트합니다.
 - deployment config 변경 시 `docs/DEPLOYMENT_SPARK.md`를 업데이트합니다.

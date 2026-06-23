@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, MagicMock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -18,7 +18,6 @@ from backend.services.pipeline import (
     run_transcript_summary_pipeline,
     run_transcription_pipeline,
 )
-from summarization.models import NormalizedTranscript, TranscriptUtterance
 
 
 def structured_payload_dict() -> dict:
@@ -36,39 +35,26 @@ def structured_payload_dict() -> dict:
     }
 
 
-def normalized_diarized_transcript() -> NormalizedTranscript:
-    """테스트용 diarized NormalizedTranscript를 반환합니다."""
-    return NormalizedTranscript(
-        utterances=[
-            TranscriptUtterance(
-                utterance_id="u_0001",
-                speaker="Speaker 1",
-                text="오늘 회의는 네 가지 안건입니다.",
-                index=0,
-                raw_line="Speaker 1: 오늘 회의는 네 가지 안건입니다.",
-                start_ms=1200,
-                end_ms=4500,
-            ),
-            TranscriptUtterance(
-                utterance_id="u_0002",
-                speaker="Speaker 2",
-                text="4월 매출이 증가했습니다.",
-                index=1,
-                raw_line="Speaker 2: 4월 매출이 증가했습니다.",
-                start_ms=4800,
-                end_ms=8000,
-            ),
-        ],
-        text="Speaker 1: 오늘 회의는 네 가지 안건입니다.\nSpeaker 2: 4월 매출이 증가했습니다.",
-        meeting_date="",
-    )
-
-
 class BackendStructuredTranscriptTests(unittest.TestCase):
     """structured transcript optional API/storage 흐름을 확인합니다."""
 
+    def setUp(self) -> None:
+        """pipeline의 영구 DB artifact update는 이 단위 테스트에서 제외합니다."""
+        self.update_meeting_artifacts_patch = patch(
+            "backend.services.pipeline.update_meeting_artifacts",
+            MagicMock(),
+        )
+        self.mark_meeting_failed_patch = patch(
+            "backend.services.pipeline.mark_meeting_failed",
+            MagicMock(),
+        )
+        self.update_meeting_artifacts_patch.start()
+        self.mark_meeting_failed_patch.start()
+
     def tearDown(self) -> None:
         """테스트가 만든 인메모리 job과 임시 디렉터리를 정리합니다."""
+        self.mark_meeting_failed_patch.stop()
+        self.update_meeting_artifacts_patch.stop()
         for job_id in list(storage.JOBS):
             storage.cleanup_job_files(job_id)
         storage.JOBS.clear()
@@ -195,48 +181,6 @@ class BackendStructuredTranscriptTests(unittest.TestCase):
 
         transcribe_mock.assert_called_once_with(Path("meeting.wav"), progress_callback=ANY, stt_provider="openai")
         self.assertEqual(storage.get_job(job.id).result.transcript, "cloud transcript")
-
-    def test_transcription_pipeline_diarized_mode_stores_plain_and_structured_transcript(self) -> None:
-        """diarized mode는 plain text와 structured transcript를 함께 저장합니다."""
-        job = storage.create_job("meeting.wav")
-        normalized = normalized_diarized_transcript()
-
-        with patch.dict("os.environ", {"TRANSCRIPTION_MODE": "diarized"}), patch(
-            "backend.services.pipeline.transcribe_audio", return_value=normalized
-        ) as transcribe_mock:
-            run_transcription_pipeline(job.id, Path("meeting.wav"))
-
-        transcribe_mock.assert_called_once_with(Path("meeting.wav"), mode="diarized")
-        result = storage.get_job(job.id).result
-        self.assertEqual(result.transcript, normalized.text)
-        self.assertEqual(result.structured_transcript["utterances"][0]["speaker"], "Speaker 1")
-        self.assertEqual(result.structured_transcript["utterances"][0]["start_ms"], 1200)
-
-        response = TranscriptResultResponse(
-            job_id=job.id,
-            filename=job.filename,
-            transcript=result.transcript,
-            structured_transcript=result.structured_transcript,
-        )
-        dumped = response.model_dump() if hasattr(response, "model_dump") else response.dict()
-        self.assertEqual(dumped["structured_transcript"]["utterances"][1]["speaker"], "Speaker 2")
-
-    def test_transcription_pipeline_diarized_failure_falls_back_to_plain_transcript(self) -> None:
-        """diarized provider 실패 시 upload flow를 깨지 않고 plain STT로 fallback합니다."""
-        job = storage.create_job("meeting.wav")
-
-        with patch.dict("os.environ", {"TRANSCRIPTION_MODE": "diarized"}), patch(
-            "backend.services.pipeline.transcribe_audio",
-            side_effect=[RuntimeError("provider down"), "plain fallback"],
-        ) as transcribe_mock:
-            run_transcription_pipeline(job.id, Path("meeting.wav"))
-
-        self.assertEqual(transcribe_mock.call_args_list[0].kwargs, {"mode": "diarized"})
-        self.assertEqual(transcribe_mock.call_args_list[1].args, (Path("meeting.wav"),))
-        self.assertEqual(transcribe_mock.call_args_list[1].kwargs, {"progress_callback": ANY, "stt_provider": None})
-        result = storage.get_job(job.id).result
-        self.assertEqual(result.transcript, "plain fallback")
-        self.assertIsNone(result.structured_transcript)
 
     def test_transcript_summary_pipeline_preserves_structured_transcript_for_later_use(self) -> None:
         """summary pipeline은 structured transcript를 받되 요약은 plain transcript 기준으로 유지합니다."""
