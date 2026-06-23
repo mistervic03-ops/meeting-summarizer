@@ -147,7 +147,6 @@ export default function UploadPage({ onShowHistory }: UploadPageProps) {
         context={transcriptResult.context ?? ""}
         filename={transcriptResult.filename}
         meetingType={transcriptResult.meeting_type ?? meetingType}
-        structuredTranscript={transcriptResult.structured_transcript ?? null}
         transcript={transcriptResult.transcript}
         onBack={() => {
           resetJobState();

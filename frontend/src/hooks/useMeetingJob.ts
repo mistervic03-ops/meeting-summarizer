@@ -7,7 +7,7 @@ import {
   getJobStatus,
   getTranscriptResult
 } from "../api/jobs";
-import { JobResult, JobStatus, JobStatusResponse, MeetingType, SttProviderMode, StructuredTranscript, TranscriptResult } from "../api/types";
+import { JobResult, JobStatus, JobStatusResponse, MeetingType, SttProviderMode, TranscriptResult } from "../api/types";
 
 const POLLING_INTERVAL_MS = 1500;
 const ACTIVE_JOB_STORAGE_KEY = "meeting_summarizer.active_job";
@@ -30,7 +30,6 @@ interface StartTranscriptJobPayload {
   context?: string;
   filename: string;
   meeting_type?: MeetingType;
-  structured_transcript?: StructuredTranscript | null;
   transcript: string;
 }
 
@@ -159,7 +158,6 @@ export function useMeetingJob() {
     context = "",
     filename,
     meeting_type = "general",
-    structured_transcript = null,
     transcript
   }: StartTranscriptJobPayload) {
     if (!transcript.trim()) {
@@ -180,7 +178,6 @@ export function useMeetingJob() {
         context,
         filename,
         meeting_type,
-        structured_transcript,
         transcript,
         transcriptionJobId: jobId || undefined
       });

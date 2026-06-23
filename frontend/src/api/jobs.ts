@@ -59,7 +59,7 @@ export async function createTranscriptionJob(payload: CreateTranscriptionJobPayl
  * Creates a meeting processing job from a reviewed or edited transcript.
  */
 export async function createTranscriptJob(payload: CreateTranscriptJobPayload): Promise<CreateJobResponse> {
-  const { transcriptionJobId, ...requestPayload } = payload;
+  const { context, filename, meeting_type, transcript, transcriptionJobId } = payload;
 
   return fetchJson<CreateJobResponse>(`${API_BASE_URL}/transcript-jobs`, {
     method: "POST",
@@ -67,7 +67,10 @@ export async function createTranscriptJob(payload: CreateTranscriptJobPayload): 
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      ...requestPayload,
+      context,
+      filename,
+      meeting_type,
+      transcript,
       transcription_job_id: transcriptionJobId ?? null
     })
   });

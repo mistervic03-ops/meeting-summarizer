@@ -49,7 +49,7 @@ Notes:
 
 ## Structured Transcript Speaker Payload
 
-Status: removed from the backend and summarization pipeline; stale frontend-only review code remains inactive.
+Status: fully removed from the backend, summarization pipeline, and active frontend/API client.
 
 Why inactive:
 
@@ -71,12 +71,12 @@ Removed locations:
 - `backend/api/routes.py:dump_structured_transcript()`.
 - `backend/services/pipeline.py:build_normalized_transcript_from_structured_payload()`.
 - `backend/storage.py:PipelineResult.structured_transcript`.
-
-Inactive remnants:
-
-- `frontend/src/pages/TranscriptPage.tsx` still contains structured transcript speaker rename helpers.
-- `frontend/src/api/types.ts` and `frontend/src/hooks/useMeetingJob.ts` still model optional `structured_transcript` fields.
-- These frontend branches are not active with the current backend because the backend no longer emits or accepts structured transcript payloads.
+- `frontend/src/api/types.ts:StructuredTranscript` and `TranscriptUtterance`.
+- `frontend/src/api/types.ts:CreateTranscriptJobPayload.structured_transcript`.
+- `frontend/src/api/types.ts:TranscriptResult.structured_transcript`.
+- `frontend/src/hooks/useMeetingJob.ts` structured transcript payload plumbing.
+- `frontend/src/pages/UploadPage.tsx` structured transcript prop forwarding.
+- `frontend/src/pages/TranscriptPage.tsx` speaker rename state, panel UI, and structured transcript helper functions.
 
 ## `/jobs` One-Shot Endpoint
 

@@ -43,7 +43,6 @@ export interface TranscriptResult {
   transcript: string;
   context?: string;
   stt_seconds?: number | null;
-  structured_transcript?: StructuredTranscript | null;
 }
 
 export interface CreateTranscriptionJobPayload {
@@ -58,20 +57,7 @@ export interface CreateTranscriptJobPayload {
   transcript: string;
   context?: string;
   meeting_type?: MeetingType;
-  structured_transcript?: StructuredTranscript | null;
   transcriptionJobId?: string;
-}
-
-export interface TranscriptUtterance {
-  utterance_id?: string | null;
-  speaker?: string | null;
-  text: string;
-  start_ms?: number | null;
-  end_ms?: number | null;
-}
-
-export interface StructuredTranscript {
-  utterances: TranscriptUtterance[];
 }
 
 export interface ActionItem {
