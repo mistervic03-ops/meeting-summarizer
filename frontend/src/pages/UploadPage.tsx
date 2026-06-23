@@ -184,6 +184,7 @@ export default function UploadPage({ onShowHistory }: UploadPageProps) {
             </p>
           </div>
           <div className="flex items-center gap-2 sm:pt-1">
+            <ThemeToggle />
             <button
               className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:text-slate-300 disabled:opacity-80 dark:bg-app-surface"
               disabled={isBusy}
@@ -193,7 +194,6 @@ export default function UploadPage({ onShowHistory }: UploadPageProps) {
               <FileText size={15} />
               지난 회의록
             </button>
-            <ThemeToggle />
             <StatusPill status={status} />
           </div>
         </header>

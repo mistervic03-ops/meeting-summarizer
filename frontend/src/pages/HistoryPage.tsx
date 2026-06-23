@@ -144,7 +144,7 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
             <p className="text-[10px] font-medium tracking-[0.04em] text-brand-700 dark:text-app-accent">BIGXDATA · 저장된 회의</p>
             <h1 className="mt-1.5 text-[30px] font-semibold leading-[1.12] tracking-normal text-slate-950">지난 회의록</h1>
             <p className="mt-1.5 max-w-2xl text-[12px] leading-5 text-slate-500">
-              이 브라우저 세션에 저장된 회의 내용을 확인합니다.
+              같은 브라우저에서 처리한 회의록을 7일간 보관합니다.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:pt-1">
@@ -203,6 +203,9 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
                     <span aria-hidden="true">·</span>
                     <span>{formatDateTime(meeting.created_at)}</span>
                   </span>
+                  {getDeletionLabel(meeting.expires_at) ? (
+                    <span className="text-[11px] font-medium text-slate-400">{getDeletionLabel(meeting.expires_at)}</span>
+                  ) : null}
                   {meeting.error ? <span className="break-words text-[11px] font-medium text-red-700">{meeting.error}</span> : null}
                 </button>
               ))}
@@ -249,4 +252,19 @@ function getStatusLabel(status: string): string {
     return "대기 중";
   }
   return status || "상태 없음";
+}
+
+function getDeletionLabel(expiresAt: string | null | undefined): string {
+  if (!expiresAt) {
+    return "";
+  }
+
+  const expiresAtDate = new Date(expiresAt);
+  if (Number.isNaN(expiresAtDate.getTime())) {
+    return "";
+  }
+
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+  const daysRemaining = Math.max(0, Math.floor((expiresAtDate.getTime() - Date.now()) / millisecondsPerDay));
+  return daysRemaining === 0 ? "오늘 삭제 예정" : `${daysRemaining}일 후 삭제`;
 }
