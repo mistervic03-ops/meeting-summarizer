@@ -51,8 +51,7 @@ local GPU variant의 현재 전제:
 
 - 단일 FastAPI process/worker
 - 프로세스 안의 resident shared Whisper model
-- `PLAIN_TRANSCRIPTION_CONCURRENCY=4` 기반 plain chunk worker
-- `LOCAL_GPU_MAX_CONCURRENCY=4` 기반 GPU inference semaphore
+- `LOCAL_GPU_MAX_CONCURRENCY=3` 기반 GPU inference semaphore
 - 기본 모델은 `openai/whisper-large-v3-turbo`
 - plain chunk size는 현재 `PLAIN_CHUNK_DURATION_SECONDS=300` 유지
 - plain STT path 우선
@@ -100,8 +99,7 @@ cp .env.example .env
 - `CLAUDE_SUMMARY_MODEL=claude-sonnet-4-6` (only when `SUMMARIZATION_PROVIDER=claude`)
 - `CORS_ORIGINS`
 - `PLAIN_CHUNK_DURATION_SECONDS=300`
-- `PLAIN_TRANSCRIPTION_CONCURRENCY=4`
-- `LOCAL_GPU_MAX_CONCURRENCY=4`
+- `LOCAL_GPU_MAX_CONCURRENCY=3`
 - `ENABLE_STT_VOCABULARY_HINTS=false`
 
 OpenAI 요약 경로는 유지합니다. Claude 요약은 `SUMMARIZATION_PROVIDER=claude`로 명시적으로 켭니다. OpenAI STT는 UI의 `고급 모드 / OpenAI API`에서 요청별로 선택할 수 있으며, 클라우드 API 비용이 발생할 수 있습니다.
