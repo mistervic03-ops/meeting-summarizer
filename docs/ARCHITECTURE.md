@@ -20,7 +20,7 @@ This document describes the current repository structure and production data flo
 ## Top-Level Runtime Files
 
 - `main.py`: CLI entry point.
-- `transcribe.py`: Shared STT workflow, audio preparation, chunking, OpenAI STT calls, and legacy diarized STT code.
+- `transcribe.py`: Shared plain STT workflow, audio preparation, chunking, OpenAI STT calls, and provider selection.
 - `summarize.py`: Backward-compatible facade for the `summarization/` package.
 - `utils.py`: Audio file validation, format detection, temporary file cleanup, and chunk splitting helpers.
 - `docker-compose.yml`: Base Docker Compose stack.
