@@ -48,11 +48,34 @@ Spark Docker Compose 배포 기준은 `docs/DEPLOYMENT_SPARK.md`를 따릅니다
 
 ## Docker 배포 인증
 
-Docker production frontend는 nginx Basic Auth를 사용합니다. 실제 계정 파일은 이미지에 포함하지 않고 배포 호스트의 `secrets/.htpasswd`를 컨테이너에 읽기 전용으로 mount합니다.
+Docker production frontend는 nginx Basic Auth를 사용합니다. 실제 계정 파일은 이미지에 포함하지 않고 배포 호스트의 `secrets/.htpasswd`를 컨테이너에 읽기 전용으로 mount합니다. 현재 운영 계정은 개인별 계정이 아니라 공유 계정 `bigxdata` 1개입니다.
+
+Spark 서버에는 `htpasswd` 명령을 제공하는 `apache2-utils`가 먼저 설치되어 있어야 합니다.
+
+```bash
+sudo apt install apache2-utils
+```
 
 ```bash
 mkdir -p secrets
-htpasswd -c secrets/.htpasswd <username>
+htpasswd -B -c secrets/.htpasswd bigxdata
+```
+
+비밀번호를 재발급할 때는 기존 파일을 새로 만들지 않도록 `-c` 없이 실행합니다.
+
+```bash
+htpasswd -B secrets/.htpasswd bigxdata
 ```
 
 Backend API는 host port로 직접 공개하지 않고 frontend nginx의 `/api/` 프록시를 통해 접근합니다.
+
+## 테스트 실행
+
+테스트는 Docker production container 안에서 `docker exec`로 실행하지 말고 host Python virtualenv에서 실행합니다.
+
+```bash
+source .venv/bin/activate
+python3 -m pytest tests/ -v
+```
+
+Production backend container에는 운영 `.env`와 overlay 환경이 주입됩니다. 예를 들어 `STT_PROVIDER=local_gpu_whisper`, `SUMMARIZATION_PROVIDER=claude` 같은 값 때문에 provider 기본값을 가정하는 일부 테스트(`test_transcribe.py`, `test_summarize_provider.py`, `test_summarize_minutes.py`)가 컨테이너 안에서는 실패할 수 있습니다. 이는 Basic Auth나 코드 회귀가 아니라 테스트 격리 가정과 실행 환경의 불일치입니다.

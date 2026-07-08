@@ -13,7 +13,7 @@
 - 백엔드 health check는 frontend nginx의 `/api/` 프록시 경유로 확인합니다. backend는 host port로 직접 공개하지 않습니다.
 
 ```bash
-curl -u '<username>' http://localhost:3000/api/health
+curl -u bigxdata http://localhost:3000/api/health
 # {"status":"ok"}
 ```
 
@@ -39,13 +39,15 @@ git checkout main
 git pull origin main
 ```
 
-기존 `docker-compose.yml`은 안정 rollback 기준입니다. plain `docker compose up -d`만 실행하면 local GPU mode가 활성화되지 않습니다.
+`docker-compose.yml`만 단독으로 실행하지 마세요. plain `docker compose up -d` 또는 `docker compose up -d --build`만 실행하면 local GPU overlay가 빠져 backend가 NGC PyTorch runtime이 아닌 base image로 빌드되고, `STT_PROVIDER=local_gpu_whisper`가 유지되지 않을 수 있습니다. 그 경우 로컬 GPU STT가 아니라 OpenAI STT 경로를 타면서 API 비용이 발생할 수 있습니다.
+
+사용 금지 예시:
 
 ```bash
 docker compose up -d
 ```
 
-Spark/GB10 서버의 local GPU STT 운영은 아래 local GPU overlay를 반드시 함께 적용합니다. 이 overlay는 backend image만 NGC PyTorch runtime으로 바꾸고 `STT_PROVIDER=local_gpu_whisper`를 설정합니다. 프론트엔드, 네트워크, 포트, volume, `.env` 로딩 방식은 기존 compose 설정을 그대로 따릅니다.
+Spark/GB10 서버의 local GPU STT 운영은 아래 local GPU overlay를 반드시 함께 적용합니다. 이 overlay는 backend image를 NGC PyTorch runtime으로 바꾸고 `STT_PROVIDER=local_gpu_whisper`를 설정합니다. 프론트엔드, 네트워크, 포트, volume, `.env` 로딩 방식은 기존 compose 설정을 그대로 따릅니다.
 
 ```bash
 docker compose \
@@ -67,19 +69,31 @@ local GPU variant의 현재 전제:
 - real chunk progress 활성화
 - OpenAI provider는 고급/클라우드 fallback으로 유지
 
-rollback은 overlay 없이 안정 compose를 다시 적용하면 됩니다.
+OpenAI STT 경로로 의도적으로 rollback할 때만 overlay 없이 안정 compose를 다시 적용합니다. 이 경우 local GPU STT가 꺼지고 OpenAI API 비용이 발생할 수 있으므로 일반 재기동/배포 명령으로 사용하지 않습니다.
 
 ```bash
 docker compose down
 docker compose up -d
 ```
 
+## 네트워크와 인증 경계
+
+Basic Auth는 frontend nginx에 적용됩니다. 따라서 backend가 host port `8000`을 publish하면 `http://192.168.3.41:8000/api/...`로 nginx 인증을 우회해 backend에 직접 접근할 수 있습니다. 이를 막기 위해 production compose에서는 backend host publish를 제거하고 `expose: "8000"`만 유지합니다.
+
+현재 접근 경로:
+
+- 사용자/브라우저: `http://192.168.3.41:3000`
+- frontend nginx -> backend: Docker 내부 네트워크의 `http://backend:8000`
+- backend direct host access: 사용하지 않음
+
+향후 디버깅 등으로 backend 직접 접근이 필요해도 host publish를 다시 여는 방식은 피합니다. 우선 SSH 터널이나 VPN처럼 접근 주체가 제한되는 경로를 사용합니다.
+
 ## 현재 실행 구조
 
 - 백엔드: FastAPI 앱 `backend.main:app`
 - 프론트엔드: React + TypeScript + Vite build, nginx production serving
-- 인증: frontend nginx Basic Auth. `./secrets/.htpasswd`를 런타임 volume으로 주입하며 이미지에 계정 파일을 포함하지 않습니다.
-- 네트워크: frontend만 host port `3000`을 publish하고, backend는 Compose 내부 네트워크에서 `backend:8000`으로만 접근합니다.
+- 인증: frontend nginx Basic Auth. `./secrets/.htpasswd`를 런타임 volume으로 주입하며 이미지에 계정 파일을 포함하지 않습니다. 계정은 개인별 발급이 아니라 공유 계정 `bigxdata` 1개로 운영합니다.
+- 네트워크: frontend만 host port `3000`을 publish하고, backend는 host에 `8000`을 publish하지 않습니다. backend는 Compose 내부 네트워크에서 `backend:8000`으로만 접근합니다.
 - STT baseline: local GPU Whisper provider, `backend/services/stt/transformers_whisper.py`
 - OpenAI STT: advanced/cloud fallback provider, `transcribe.py`
 - 요약 baseline: OpenAI Responses API, `summarization/`
@@ -95,11 +109,23 @@ docker compose up -d
 cp .env.example .env
 ```
 
-Basic Auth 계정 파일은 별도 secrets 디렉터리에 만듭니다. 실제 사용자명은 운영 계정 기준으로 정합니다.
+Basic Auth 계정 파일은 별도 secrets 디렉터리에 만듭니다. Spark 서버에는 `htpasswd` 명령을 제공하는 `apache2-utils`가 먼저 설치되어 있어야 합니다.
+
+```bash
+sudo apt install apache2-utils
+```
+
+현재 운영은 공유 계정 `bigxdata` 1개를 사용합니다.
 
 ```bash
 mkdir -p secrets
-htpasswd -c secrets/.htpasswd <username>
+htpasswd -B -c secrets/.htpasswd bigxdata
+```
+
+비밀번호 재발급 시에는 기존 파일을 덮어 만들지 않도록 `-c` 없이 실행합니다.
+
+```bash
+htpasswd -B secrets/.htpasswd bigxdata
 ```
 
 `secrets/.htpasswd`는 git에 커밋하지 않습니다. 이 파일은 `docker-compose.yml`에서 frontend 컨테이너의 `/etc/nginx/secrets/.htpasswd`로 read-only mount됩니다.
@@ -260,6 +286,8 @@ python3 -m py_compile main.py transcribe.py summarize.py backend/main.py backend
 python3 -m pytest tests/ -v
 ```
 
+테스트는 host virtualenv에서 실행합니다. Production backend container 안에서 `docker exec`로 테스트를 돌리면 운영 `.env`와 overlay 환경이 주입됩니다. 예를 들어 `STT_PROVIDER=local_gpu_whisper`, `SUMMARIZATION_PROVIDER=claude` 상태에서는 provider 기본값을 가정하는 일부 테스트(`test_transcribe.py`, `test_summarize_provider.py`, `test_summarize_minutes.py`의 provider 관련 8개)가 실패할 수 있습니다. 이는 코드 회귀가 아니라 테스트 격리 가정과 실행 환경의 불일치입니다.
+
 프론트엔드:
 
 ```bash
@@ -270,14 +298,14 @@ npm run build
 운영 health check:
 
 ```bash
-curl http://localhost:8000/api/health
+curl -u bigxdata http://localhost:3000/api/health
 ```
 
 Spark 배포 직후에는 backend container가 `Started` 상태여도 Uvicorn이 요청을 받을 준비가 되기 전 짧은 시간 동안 `curl: (56) Recv failure: Connection reset by peer`가 발생할 수 있습니다. 배포 성공 여부를 단발 `curl`로 판단하지 말고 아래 retry/wait 하네스를 사용합니다.
 
 ```bash
 for attempt in $(seq 1 20); do
-  if curl -fsS http://localhost:8000/api/health; then
+  if curl -fsS -u bigxdata http://localhost:3000/api/health; then
     echo
     break
   fi
