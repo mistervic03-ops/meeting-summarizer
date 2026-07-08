@@ -78,4 +78,4 @@ source .venv/bin/activate
 python3 -m pytest tests/ -v
 ```
 
-Production backend container에는 운영 `.env`와 overlay 환경이 주입됩니다. 예를 들어 `STT_PROVIDER=local_gpu_whisper`, `SUMMARIZATION_PROVIDER=claude` 같은 값 때문에 provider 기본값을 가정하는 일부 테스트(`test_transcribe.py`, `test_summarize_provider.py`, `test_summarize_minutes.py`)가 컨테이너 안에서는 실패할 수 있습니다. 이는 Gateway 인증이나 코드 회귀가 아니라 테스트 격리 가정과 실행 환경의 불일치입니다.
+테스트 하네스는 실제 `.env` 파일을 읽지 않도록 격리되어 있습니다. Provider 기본값을 확인하는 테스트는 host, container, CI 어디에서 실행해도 운영 `.env` 값과 무관하게 같은 결과를 기대합니다.

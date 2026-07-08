@@ -286,7 +286,7 @@ python3 -m py_compile main.py transcribe.py summarize.py backend/main.py backend
 python3 -m pytest tests/ -v
 ```
 
-테스트는 host virtualenv에서 실행합니다. Production backend container 안에서 `docker exec`로 테스트를 돌리면 운영 `.env`와 overlay 환경이 주입됩니다. 예를 들어 `STT_PROVIDER=local_gpu_whisper`, `SUMMARIZATION_PROVIDER=claude` 상태에서는 provider 기본값을 가정하는 일부 테스트(`test_transcribe.py`, `test_summarize_provider.py`, `test_summarize_minutes.py`의 provider 관련 8개)가 실패할 수 있습니다. 이는 코드 회귀가 아니라 테스트 격리 가정과 실행 환경의 불일치입니다.
+테스트는 host virtualenv에서 실행합니다. 테스트 하네스는 실제 `.env` 파일을 읽지 않도록 격리되어 있습니다. Provider 기본값을 확인하는 테스트는 host, container, CI 어디에서 실행해도 운영 `.env` 값과 무관하게 같은 결과를 기대합니다.
 
 프론트엔드:
 
