@@ -4,11 +4,11 @@ This document describes the current repository structure and production data flo
 
 ## Directory Structure
 
-- `backend/`: FastAPI application, API routes, request/response schemas, session handling, SQLite meeting history, storage, and job orchestration.
+- `backend/`: FastAPI application, gateway auth middleware, API routes, request/response schemas, session handling, SQLite meeting history, storage, and job orchestration.
 - `backend/api/`: HTTP route definitions for health checks, uploads, transcript jobs, meeting history, results, and downloads.
 - `backend/services/`: Backend service layer that connects API jobs to STT and summarization.
 - `backend/services/stt/`: STT provider abstraction and local GPU Whisper runtime.
-- `frontend/`: React + TypeScript + Vite application served by nginx in Docker production builds. The production nginx layer enforces Basic Auth for both the static app and `/api/` proxy paths with the shared `bigxdata` account.
+- `frontend/`: React + TypeScript + Vite application served by nginx in Docker production builds. The SPA renders the password gateway page before the meeting UI, while nginx only serves static assets and proxies `/api/`.
 - `frontend/src/`: Upload, transcript review, result, history UI, API client helpers, components, and export utilities.
 - `summarization/`: Meeting-minutes engine for transcript normalization, profiling, extraction, validation, rendering, policies, glossary, and LLM provider selection.
 - `tests/`: Unit tests for backend plain transcript handling, chunking, summarization, transcription helpers, CLI behavior, and utilities.
@@ -23,16 +23,17 @@ This document describes the current repository structure and production data flo
 - `transcribe.py`: Shared plain STT workflow, audio preparation, chunking, OpenAI STT calls, and provider selection.
 - `summarize.py`: Backward-compatible facade for the `summarization/` package.
 - `utils.py`: Audio file validation, format detection, temporary file cleanup, and chunk splitting helpers.
-- `docker-compose.yml`: Base Docker Compose stack. It publishes the frontend on host port 3000, keeps the backend on the Compose network only, and mounts `./secrets` into the frontend container for nginx Basic Auth credentials.
+- `docker-compose.yml`: Base Docker Compose stack. It publishes the frontend on host port 3000, keeps the backend on the Compose network only, and mounts `./secrets` into the backend container for Gateway password credentials.
 - `docker-compose.local-gpu.yml`: Spark local GPU STT overlay that enables `STT_PROVIDER=local_gpu_whisper`.
 - `Dockerfile.backend`: Base backend image.
 - `Dockerfile.backend.local-gpu`: NGC PyTorch backend image for local GPU Whisper.
 - `Dockerfile.frontend`: React build and nginx serving image.
-- `secrets/`: Local deployment secrets such as `.htpasswd`. Secret contents are ignored by git and mounted at runtime instead of being baked into images. The current Spark deployment uses one shared Basic Auth account, `bigxdata`.
+- `secrets/`: Local deployment secrets such as `.htpasswd`. Secret contents are ignored by git and Docker build context, then mounted at runtime instead of being baked into images. The current Spark deployment uses one shared Gateway account, `bigxdata`.
 - `data/`: Runtime SQLite DB and saved transcript/summary artifacts. This directory is mounted into the backend container and is not source code.
 
 ## Current Public API Shape
 
+- Gateway auth uses `POST /api/auth/login`, `GET /api/auth/me`, and `POST /api/auth/logout`. All other `/api/*` routes require the signed `gwauth` cookie.
 - Audio upload uses `POST /api/transcriptions` with `audio_file`, optional `context`, `meeting_type`, and `stt_provider`.
 - Transcript/minutes generation uses `POST /api/transcript-jobs` with plain `transcript` text, optional `context`, `meeting_type`, and optional `transcription_job_id`.
 - `GET /api/jobs/{job_id}` is the active polling endpoint for both STT and summary jobs.

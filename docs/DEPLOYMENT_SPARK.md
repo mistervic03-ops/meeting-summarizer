@@ -78,7 +78,7 @@ docker compose up -d
 
 ## 네트워크와 인증 경계
 
-Basic Auth는 frontend nginx에 적용됩니다. 따라서 backend가 host port `8000`을 publish하면 `http://192.168.3.41:8000/api/...`로 nginx 인증을 우회해 backend에 직접 접근할 수 있습니다. 이를 막기 위해 production compose에서는 backend host publish를 제거하고 `expose: "8000"`만 유지합니다.
+Gateway 인증은 backend middleware가 `/api/*` 요청을 보호하고, frontend SPA가 비밀번호 로그인 화면을 렌더링합니다. nginx는 정적 파일 서빙과 `/api/` proxy만 담당합니다. backend가 host port `8000`을 publish하면 사용자가 `http://192.168.3.41:8000/api/...`로 frontend/nginx 경계를 우회할 수 있으므로 production compose에서는 backend host publish를 제거하고 `expose: "8000"`만 유지합니다.
 
 현재 접근 경로:
 
@@ -92,7 +92,7 @@ Basic Auth는 frontend nginx에 적용됩니다. 따라서 backend가 host port 
 
 - 백엔드: FastAPI 앱 `backend.main:app`
 - 프론트엔드: React + TypeScript + Vite build, nginx production serving
-- 인증: frontend nginx Basic Auth. `./secrets/.htpasswd`를 런타임 volume으로 주입하며 이미지에 계정 파일을 포함하지 않습니다. 계정은 개인별 발급이 아니라 공유 계정 `bigxdata` 1개로 운영합니다.
+- 인증: backend Gateway middleware. `./secrets/.htpasswd`를 backend 컨테이너에 런타임 volume으로 주입하며 이미지에 계정 파일을 포함하지 않습니다. 계정은 개인별 발급이 아니라 공유 계정 `bigxdata` 1개로 운영합니다.
 - 네트워크: frontend만 host port `3000`을 publish하고, backend는 host에 `8000`을 publish하지 않습니다. backend는 Compose 내부 네트워크에서 `backend:8000`으로만 접근합니다.
 - STT baseline: local GPU Whisper provider, `backend/services/stt/transformers_whisper.py`
 - OpenAI STT: advanced/cloud fallback provider, `transcribe.py`
@@ -109,7 +109,7 @@ Basic Auth는 frontend nginx에 적용됩니다. 따라서 backend가 host port 
 cp .env.example .env
 ```
 
-Basic Auth 계정 파일은 별도 secrets 디렉터리에 만듭니다. Spark 서버에는 `htpasswd` 명령을 제공하는 `apache2-utils`가 먼저 설치되어 있어야 합니다.
+Gateway 인증 계정 파일은 별도 secrets 디렉터리에 만듭니다. Spark 서버에는 `htpasswd` 명령을 제공하는 `apache2-utils`가 먼저 설치되어 있어야 합니다.
 
 ```bash
 sudo apt install apache2-utils
@@ -128,7 +128,7 @@ htpasswd -B -c secrets/.htpasswd bigxdata
 htpasswd -B secrets/.htpasswd bigxdata
 ```
 
-`secrets/.htpasswd`는 git에 커밋하지 않습니다. 이 파일은 `docker-compose.yml`에서 frontend 컨테이너의 `/etc/nginx/secrets/.htpasswd`로 read-only mount됩니다.
+`secrets/.htpasswd`는 git에 커밋하지 않습니다. 이 파일은 `docker-compose.yml`에서 backend 컨테이너의 `/app/secrets/.htpasswd`로 read-only mount됩니다.
 
 운영 baseline에 필요한 주요 값:
 

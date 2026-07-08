@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, CheckCircle2, FileText, Info, Loader2 } from "lucide-react";
+import { ArrowRight, CheckCircle2, FileText, Info, Loader2, LogOut } from "lucide-react";
 import FileDropZone from "../components/FileDropZone";
 import ProgressPanel from "../components/ProgressPanel";
 import StatusPill from "../components/StatusPill";
@@ -19,6 +19,7 @@ const CLOUD_MODE_HELP_TEXT = "OpenAI로 음성을 텍스트로 바꿉니다.\n�
 type InputMode = "audio" | "text";
 
 interface UploadPageProps {
+  onLogout: () => void;
   onShowHistory: () => void;
 }
 
@@ -71,7 +72,7 @@ const TRANSCRIPTION_MODES: Array<{
 /**
  * Provides the branded upload page for starting a meeting minutes job.
  */
-export default function UploadPage({ onShowHistory }: UploadPageProps) {
+export default function UploadPage({ onLogout, onShowHistory }: UploadPageProps) {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [contextText, setContextText] = useState("");
   const [inputMode, setInputMode] = useState<InputMode>("audio");
@@ -155,6 +156,7 @@ export default function UploadPage({ onShowHistory }: UploadPageProps) {
         context={reviewContext}
         filename={transcriptResult.filename}
         meetingType={reviewMeetingType}
+        onLogout={onLogout}
         precomputedSummary={precomputedSummary}
         transcript={transcriptResult.transcript}
         onBack={() => {
@@ -174,6 +176,7 @@ export default function UploadPage({ onShowHistory }: UploadPageProps) {
       <ResultPage
         filename={result.filename}
         meetingType={result.meeting_type ?? meetingType}
+        onLogout={onLogout}
         result={result}
       />
     );
@@ -192,6 +195,14 @@ export default function UploadPage({ onShowHistory }: UploadPageProps) {
           </div>
           <div className="flex items-center gap-2 sm:pt-1">
             <ThemeToggle />
+            <button
+              className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
+              type="button"
+              onClick={onLogout}
+            >
+              <LogOut size={13} />
+              로그아웃
+            </button>
             <button
               className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 disabled:cursor-not-allowed disabled:opacity-80 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
               disabled={isBusy}

@@ -28,7 +28,10 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
  */
 async function fetchJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   try {
-    const response = await fetch(input, init);
+    const response = await fetch(input, {
+      ...init,
+      credentials: init?.credentials ?? "include"
+    });
     return parseJsonResponse<T>(response);
   } catch (caughtError) {
     if (caughtError instanceof TypeError) {

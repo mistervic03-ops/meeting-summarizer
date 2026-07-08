@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, FileText, Loader2, RotateCcw, Trash2 } from "lucide-react";
+import { ArrowLeft, FileText, Loader2, LogOut, RotateCcw, Trash2 } from "lucide-react";
 import MinutesTab from "../components/MinutesTab";
 import ThemeToggle from "../components/ThemeToggle";
 
@@ -7,6 +7,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 interface HistoryPageProps {
   onBack: () => void;
+  onLogout: () => void;
 }
 
 interface MeetingListItem {
@@ -30,7 +31,7 @@ type LoadState = "idle" | "loading" | "failed";
 /**
  * Shows saved meeting transcripts and summaries for the current browser session.
  */
-export default function HistoryPage({ onBack }: HistoryPageProps) {
+export default function HistoryPage({ onBack, onLogout }: HistoryPageProps) {
   const [meetings, setMeetings] = useState<MeetingListItem[]>([]);
   const [selectedMeeting, setSelectedMeeting] = useState<MeetingDetail | null>(null);
   const [listState, setListState] = useState<LoadState>("idle");
@@ -137,11 +138,19 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
                 type="button"
                 onClick={handleBackToList}
               >
-                <ArrowLeft size={13} />
-                목록
-              </button>
-              <ThemeToggle />
-            </div>
+              <ArrowLeft size={13} />
+              목록
+            </button>
+            <button
+              className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
+              type="button"
+              onClick={onLogout}
+            >
+              <LogOut size={13} />
+              로그아웃
+            </button>
+            <ThemeToggle />
+          </div>
           </header>
 
           {error ? <p className="mt-4 break-words text-xs font-medium leading-5 text-red-700">{error}</p> : null}
@@ -182,6 +191,14 @@ export default function HistoryPage({ onBack }: HistoryPageProps) {
             >
               <ArrowLeft size={13} />
               업로드
+            </button>
+            <button
+              className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
+              type="button"
+              onClick={onLogout}
+            >
+              <LogOut size={13} />
+              로그아웃
             </button>
             <ThemeToggle />
           </div>

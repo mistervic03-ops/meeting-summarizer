@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes import router
 from backend.db import cleanup_expired, init_db
+from backend.gateway_auth import gateway_auth_middleware, router as auth_router
 
 DEFAULT_CORS_ORIGINS = [
     "http://localhost:3000",
@@ -44,6 +45,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.middleware("http")(gateway_auth_middleware)
+    app.include_router(auth_router, prefix="/api")
     app.include_router(router, prefix="/api")
     return app
 

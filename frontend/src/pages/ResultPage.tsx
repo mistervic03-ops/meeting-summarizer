@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarDays, Check, ChevronDown, Copy, Download, Edit3 } from "lucide-react";
+import { CalendarDays, Check, ChevronDown, Copy, Download, Edit3, LogOut } from "lucide-react";
 import ActionsTab from "../components/ActionsTab";
 import MinutesTab from "../components/MinutesTab";
 import SummaryTab from "../components/SummaryTab";
@@ -16,6 +16,7 @@ interface ResultPageProps {
   meetingType?: MeetingType;
   result?: JobResult;
   onCopy?: (minutes: string) => void;
+  onLogout?: () => void;
 }
 
 const EMPTY_RESULT: JobResult = {
@@ -127,7 +128,8 @@ export default function ResultPage({
   meetingDate,
   meetingType,
   result = EMPTY_RESULT,
-  onCopy
+  onCopy,
+  onLogout
 }: ResultPageProps) {
   const [activeTab, setActiveTab] = useState<ResultTab>("actions");
   const title = normalizeDisplayText(filename || result.filename || "회의록");
@@ -218,7 +220,19 @@ export default function ResultPage({
         <header className="border-b border-slate-300 pb-5">
           <div className="mb-1.5 flex items-center justify-between gap-3">
             <p className="min-w-0 text-[10px] font-medium tracking-[0.04em] text-brand-700 dark:text-app-accent">BIGXDATA · 회의록</p>
-            <ThemeToggle compact />
+            <div className="flex items-center gap-2">
+              {onLogout ? (
+                <button
+                  className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
+                  type="button"
+                  onClick={onLogout}
+                >
+                  <LogOut size={13} />
+                  로그아웃
+                </button>
+              ) : null}
+              <ThemeToggle compact />
+            </div>
           </div>
           <div className="flex flex-col gap-3.5 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">

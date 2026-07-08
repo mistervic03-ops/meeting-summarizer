@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download, Loader2, RotateCcw, Send } from "lucide-react";
+import { Download, Loader2, LogOut, RotateCcw, Send } from "lucide-react";
 import ProgressPanel from "../components/ProgressPanel";
 import ThemeToggle from "../components/ThemeToggle";
 import { useMeetingJob } from "../hooks/useMeetingJob";
@@ -12,6 +12,7 @@ interface TranscriptPageProps {
   filename: string;
   meetingType?: MeetingType;
   onBack?: () => void;
+  onLogout?: () => void;
   precomputedSummary?: PrecomputedSummaryState;
   transcript: string;
 }
@@ -35,6 +36,7 @@ export default function TranscriptPage({
   filename,
   meetingType = "execution",
   onBack,
+  onLogout,
   precomputedSummary,
   transcript
 }: TranscriptPageProps) {
@@ -68,6 +70,7 @@ export default function TranscriptPage({
       <ResultPage
         filename={completedResult.filename}
         meetingType={completedResult.meeting_type ?? meetingType}
+        onLogout={onLogout}
         result={completedResult}
       />
     );
@@ -123,6 +126,16 @@ export default function TranscriptPage({
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:mt-1">
             <ThemeToggle />
+            {onLogout ? (
+              <button
+                className="inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 text-[11px] font-medium text-slate-500 transition-colors duration-150 ease-out hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 focus-visible:border-brand-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-100 dark:border-app-border dark:bg-app-surface dark:text-app-muted dark:hover:bg-app-hover dark:hover:text-app-text"
+                type="button"
+                onClick={onLogout}
+              >
+                <LogOut size={13} />
+                로그아웃
+              </button>
+            ) : null}
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-medium text-slate-500">
               <span>{stats.characters.toLocaleString()}자</span>
               <span aria-hidden="true" className="text-slate-300">·</span>

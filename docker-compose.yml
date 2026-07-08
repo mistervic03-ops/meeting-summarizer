@@ -6,6 +6,7 @@ services:
     container_name: meeting-backend
     volumes:
       - ./data:/app/data
+      - ./secrets:/app/secrets:ro
     env_file:
       - .env
     expose:
@@ -19,8 +20,6 @@ services:
     container_name: meeting-frontend
     ports:
       - "3000:80"
-    volumes:
-      - ./secrets:/etc/nginx/secrets:ro
     depends_on:
       - backend
     restart: unless-stopped
