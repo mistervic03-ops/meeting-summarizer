@@ -45,3 +45,14 @@ npm run dev:server -- --host 0.0.0.0 --port 5173
 ```
 
 Spark Docker Compose 배포 기준은 `docs/DEPLOYMENT_SPARK.md`를 따릅니다.
+
+## Docker 배포 인증
+
+Docker production frontend는 nginx Basic Auth를 사용합니다. 실제 계정 파일은 이미지에 포함하지 않고 배포 호스트의 `secrets/.htpasswd`를 컨테이너에 읽기 전용으로 mount합니다.
+
+```bash
+mkdir -p secrets
+htpasswd -c secrets/.htpasswd <username>
+```
+
+Backend API는 host port로 직접 공개하지 않고 frontend nginx의 `/api/` 프록시를 통해 접근합니다.

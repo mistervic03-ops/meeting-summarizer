@@ -10,10 +10,10 @@
 - 운영 배포: Docker Compose 검증 완료
 - 백엔드: Dockerized FastAPI
 - 프론트엔드: nginx production container에서 정적 서빙
-- 백엔드 health check:
+- 백엔드 health check는 frontend nginx의 `/api/` 프록시 경유로 확인합니다. backend는 host port로 직접 공개하지 않습니다.
 
 ```bash
-curl http://localhost:8000/api/health
+curl -u '<username>' http://localhost:3000/api/health
 # {"status":"ok"}
 ```
 
@@ -78,6 +78,8 @@ docker compose up -d
 
 - 백엔드: FastAPI 앱 `backend.main:app`
 - 프론트엔드: React + TypeScript + Vite build, nginx production serving
+- 인증: frontend nginx Basic Auth. `./secrets/.htpasswd`를 런타임 volume으로 주입하며 이미지에 계정 파일을 포함하지 않습니다.
+- 네트워크: frontend만 host port `3000`을 publish하고, backend는 Compose 내부 네트워크에서 `backend:8000`으로만 접근합니다.
 - STT baseline: local GPU Whisper provider, `backend/services/stt/transformers_whisper.py`
 - OpenAI STT: advanced/cloud fallback provider, `transcribe.py`
 - 요약 baseline: OpenAI Responses API, `summarization/`
@@ -92,6 +94,15 @@ docker compose up -d
 ```bash
 cp .env.example .env
 ```
+
+Basic Auth 계정 파일은 별도 secrets 디렉터리에 만듭니다. 실제 사용자명은 운영 계정 기준으로 정합니다.
+
+```bash
+mkdir -p secrets
+htpasswd -c secrets/.htpasswd <username>
+```
+
+`secrets/.htpasswd`는 git에 커밋하지 않습니다. 이 파일은 `docker-compose.yml`에서 frontend 컨테이너의 `/etc/nginx/secrets/.htpasswd`로 read-only mount됩니다.
 
 운영 baseline에 필요한 주요 값:
 

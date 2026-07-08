@@ -8,7 +8,7 @@ This document describes the current repository structure and production data flo
 - `backend/api/`: HTTP route definitions for health checks, uploads, transcript jobs, meeting history, results, and downloads.
 - `backend/services/`: Backend service layer that connects API jobs to STT and summarization.
 - `backend/services/stt/`: STT provider abstraction and local GPU Whisper runtime.
-- `frontend/`: React + TypeScript + Vite application served by nginx in Docker production builds.
+- `frontend/`: React + TypeScript + Vite application served by nginx in Docker production builds. The production nginx layer also enforces Basic Auth for both the static app and `/api/` proxy paths.
 - `frontend/src/`: Upload, transcript review, result, history UI, API client helpers, components, and export utilities.
 - `summarization/`: Meeting-minutes engine for transcript normalization, profiling, extraction, validation, rendering, policies, glossary, and LLM provider selection.
 - `tests/`: Unit tests for backend plain transcript handling, chunking, summarization, transcription helpers, CLI behavior, and utilities.
@@ -23,11 +23,12 @@ This document describes the current repository structure and production data flo
 - `transcribe.py`: Shared plain STT workflow, audio preparation, chunking, OpenAI STT calls, and provider selection.
 - `summarize.py`: Backward-compatible facade for the `summarization/` package.
 - `utils.py`: Audio file validation, format detection, temporary file cleanup, and chunk splitting helpers.
-- `docker-compose.yml`: Base Docker Compose stack.
+- `docker-compose.yml`: Base Docker Compose stack. It publishes the frontend on host port 3000, keeps the backend on the Compose network, and mounts `./secrets` into the frontend container for nginx Basic Auth credentials.
 - `docker-compose.local-gpu.yml`: Spark local GPU STT overlay that enables `STT_PROVIDER=local_gpu_whisper`.
 - `Dockerfile.backend`: Base backend image.
 - `Dockerfile.backend.local-gpu`: NGC PyTorch backend image for local GPU Whisper.
 - `Dockerfile.frontend`: React build and nginx serving image.
+- `secrets/`: Local deployment secrets such as `.htpasswd`. Secret contents are ignored by git and mounted at runtime instead of being baked into images.
 - `data/`: Runtime SQLite DB and saved transcript/summary artifacts. This directory is mounted into the backend container and is not source code.
 
 ## Current Public API Shape
